@@ -24,8 +24,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -67,21 +69,44 @@ fun StylusCanvas(
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val isLargeTabletWidth = maxWidth >= 840.dp
 
-        // Active Canvas Surface
+        // Active Canvas Surface with cached hardware-accelerated grid background
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
                 .background(backgroundColor)
+                .drawWithCache {
+                    val gridSize = 40.dp.toPx()
+                    val dotRadius = 1.5.dp.toPx()
+                    val dotColor = Color.LightGray.copy(alpha = 0.5f)
+                    val points = ArrayList<Offset>()
+                    var x = gridSize
+                    while (x < size.width) {
+                        var y = gridSize
+                        while (y < size.height) {
+                            points.add(Offset(x, y))
+                            y += gridSize
+                        }
+                        x += gridSize
+                    }
+
+                    onDrawBehind {
+                        drawPoints(
+                            points = points,
+                            pointMode = androidx.compose.ui.graphics.PointMode.Points,
+                            color = dotColor,
+                            strokeWidth = dotRadius * 2f,
+                            cap = StrokeCap.Round
+                        )
+                    }
+                }
                 .pointerInteropFilter { motionEvent ->
                     viewModel.processMotionEvent(motionEvent)
                 }
         ) {
-            // Draw background paper grid pattern
-            drawGridBackground()
-
             // Render all completed drawing strokes
-            for (stroke in uiState.strokes) {
-                drawStroke(stroke)
+            val strokes = uiState.strokes
+            for (i in strokes.indices) {
+                drawStroke(strokes[i])
             }
 
             // Render current active in-progress stroke
@@ -90,8 +115,9 @@ fun StylusCanvas(
             }
 
             // Render text annotations inserted from calculation overlay
-            for (annotation in uiState.canvasTextAnnotations) {
-                drawTextAnnotation(textMeasurer, annotation)
+            val annotations = uiState.canvasTextAnnotations
+            for (i in annotations.indices) {
+                drawTextAnnotation(textMeasurer, annotations[i])
             }
         }
 
@@ -178,17 +204,11 @@ private fun DrawScope.drawTextAnnotation(
     textMeasurer: androidx.compose.ui.text.TextMeasurer,
     annotation: CanvasTextAnnotation
 ) {
-    val textStyle = TextStyle(
-        fontSize = annotation.fontSizeSp.sp,
-        fontWeight = FontWeight.Bold,
-        fontFamily = FontFamily.Monospace,
-        color = annotation.color
-    )
     drawText(
         textMeasurer = textMeasurer,
         text = annotation.text,
         topLeft = Offset(annotation.x, annotation.y),
-        style = textStyle
+        style = annotation.textStyle
     )
 }
 
@@ -212,20 +232,13 @@ private fun DrawScope.drawStroke(stroke: DrawingStroke) {
         return
     }
 
-    val minW = stroke.points.minOf { it.width }
-    val maxW = stroke.points.maxOf { it.width }
-
-    if (maxW - minW < 0.5f) {
-        // Uniform stroke width path
+    if (stroke.isUniformWidth) {
+        // Uniform stroke width path - uses cached path and cached Stroke style
         drawPath(
             path = stroke.path,
             color = color,
             alpha = alpha,
-            style = Stroke(
-                width = stroke.baseWidth,
-                cap = StrokeCap.Round,
-                join = StrokeJoin.Round
-            )
+            style = stroke.strokeStyle
         )
     } else {
         // Pressure-varying stroke segment rendering

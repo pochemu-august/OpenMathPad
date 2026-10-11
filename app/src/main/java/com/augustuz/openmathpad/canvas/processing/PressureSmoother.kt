@@ -12,13 +12,48 @@ class PressureSmoother(
     private val smoothingFactor: Float = 0.35f,
     private val defaultPressure: Float = 0.5f
 ) {
-    private var lastSmoothedPressure: Float? = null
+    private var lastSmoothedPressure: Float = Float.NaN
+
+    var currentSmoothedPressure: Float = Float.NaN
+        private set
+
+    var currentCalculatedWidth: Float = Float.NaN
+        private set
 
     /**
      * Resets filter state when beginning a new stroke gesture.
      */
     fun reset() {
-        lastSmoothedPressure = null
+        lastSmoothedPressure = Float.NaN
+        currentSmoothedPressure = Float.NaN
+        currentCalculatedWidth = Float.NaN
+    }
+
+    /**
+     * Updates smoothed pressure and calculated width in-place without heap allocations.
+     */
+    fun update(
+        rawPressure: Float,
+        baseWidth: Float,
+        isStylus: Boolean
+    ) {
+        val effectiveRaw = if (!isStylus || rawPressure <= 0.001f) {
+            defaultPressure
+        } else {
+            rawPressure.coerceIn(0.05f, 2.0f)
+        }
+
+        val smoothed = if (lastSmoothedPressure.isNaN()) {
+            effectiveRaw
+        } else {
+            lastSmoothedPressure + smoothingFactor * (effectiveRaw - lastSmoothedPressure)
+        }
+
+        lastSmoothedPressure = smoothed
+        currentSmoothedPressure = smoothed
+
+        val scale = minScale + (maxScale - minScale) * smoothed.coerceAtMost(1.2f)
+        currentCalculatedWidth = max(1.0f, baseWidth * scale)
     }
 
     /**
@@ -34,21 +69,7 @@ class PressureSmoother(
         baseWidth: Float,
         isStylus: Boolean
     ): Pair<Float, Float> {
-        val effectiveRaw = if (!isStylus || rawPressure <= 0.001f) {
-            defaultPressure
-        } else {
-            rawPressure.coerceIn(0.05f, 2.0f)
-        }
-
-        val smoothed = lastSmoothedPressure?.let { prev ->
-            prev + smoothingFactor * (effectiveRaw - prev)
-        } ?: effectiveRaw
-
-        lastSmoothedPressure = smoothed
-
-        val scale = minScale + (maxScale - minScale) * smoothed.coerceAtMost(1.2f)
-        val calculatedWidth = max(1.0f, baseWidth * scale)
-
-        return Pair(smoothed, calculatedWidth)
+        update(rawPressure, baseWidth, isStylus)
+        return Pair(currentSmoothedPressure, currentCalculatedWidth)
     }
 }

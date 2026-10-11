@@ -26,9 +26,9 @@ data class OcrMathResult(
     val isReliableRecognition: Boolean
 )
 
-class OcrMathEngineAdapter(
-    private val mathEngine: MathEngine = MathEngine(),
-    private val minimumConfidenceThreshold: Float = 0.5f
+open class OcrMathEngineAdapter(
+    protected val mathEngine: MathEngine = MathEngine(),
+    protected val minimumConfidenceThreshold: Float = 0.5f
 ) {
 
     fun processOcrOutput(

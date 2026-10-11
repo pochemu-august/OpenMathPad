@@ -23,20 +23,20 @@ object BezierSmoother {
         baseWidth: Float,
         pressureSmoother: PressureSmoother
     ): List<StrokePoint> {
-        val points = mutableListOf<StrokePoint>()
+        val historySize = event.historySize
+        val points = ArrayList<StrokePoint>(historySize + 1)
         val toolType = if (event.pointerCount > 0) event.getToolType(0) else MotionEvent.TOOL_TYPE_UNKNOWN
         val isStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
 
         // 1. Process historical points
-        val historySize = event.historySize
         for (h in 0 until historySize) {
             val hX = event.getHistoricalX(h)
             val hY = event.getHistoricalY(h)
             val hPressure = event.getHistoricalPressure(h)
             val hTime = event.getHistoricalEventTime(h)
 
-            val (smoothedPressure, width) = pressureSmoother.calculateWidth(hPressure, baseWidth, isStylus)
-            points.add(StrokePoint(hX, hY, smoothedPressure, width, hTime))
+            pressureSmoother.update(hPressure, baseWidth, isStylus)
+            points.add(StrokePoint(hX, hY, pressureSmoother.currentSmoothedPressure, pressureSmoother.currentCalculatedWidth, hTime))
         }
 
         // 2. Process current event point
@@ -45,8 +45,8 @@ object BezierSmoother {
         val cPressure = event.pressure
         val cTime = event.eventTime
 
-        val (smoothedPressure, width) = pressureSmoother.calculateWidth(cPressure, baseWidth, isStylus)
-        points.add(StrokePoint(cX, cY, smoothedPressure, width, cTime))
+        pressureSmoother.update(cPressure, baseWidth, isStylus)
+        points.add(StrokePoint(cX, cY, pressureSmoother.currentSmoothedPressure, pressureSmoother.currentCalculatedWidth, cTime))
 
         return points
     }

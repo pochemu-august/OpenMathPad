@@ -2,6 +2,8 @@ package com.augustuz.openmathpad.canvas
 
 import androidx.compose.ui.graphics.Color
 import com.augustuz.openmathpad.canvas.model.CanvasTool
+import com.augustuz.openmathpad.canvas.model.DrawingStroke
+import com.augustuz.openmathpad.canvas.model.StrokePoint
 import com.augustuz.openmathpad.canvas.state.CanvasViewModel
 import com.augustuz.openmathpad.mathengine.model.AngleMode
 import com.augustuz.openmathpad.mathengine.model.MathErrorType
@@ -104,6 +106,41 @@ class CanvasViewModelTest {
         assertTrue("Overlay should be visible after recognition", uiState.isOverlayVisible)
         assertTrue("Formula text should not be blank", uiState.formulaText.isNotBlank())
         assertTrue("Current result should be Success", uiState.currentResult is MathResult.Success)
+    }
+
+    @Test
+    fun recognizeAndEvaluateStrokes_autoInsertsAnnotationWithPlacementPointAndSupportsUndoRedo() {
+        val stroke = DrawingStroke(
+            points = listOf(
+                StrokePoint(100f, 50f),
+                StrokePoint(300f, 150f)
+            )
+        )
+        viewModel.addStroke(stroke)
+
+        viewModel.recognizeAndEvaluateStrokes()
+
+        val uiState = viewModel.uiState.value
+        assertTrue("Overlay should be visible after recognition", uiState.isOverlayVisible)
+        assertTrue("Formula text should not be blank", uiState.formulaText.isNotBlank())
+        assertTrue("Current result should be Success", uiState.currentResult is MathResult.Success)
+
+        // Verify result annotation was auto-inserted directly onto canvas at placement point
+        assertEquals("Auto-inserted annotation count should be 1", 1, uiState.canvasTextAnnotations.size)
+        val annotation = uiState.canvasTextAnnotations.first()
+        assertTrue("Annotation text should start with '='", annotation.text.startsWith("="))
+
+        // Bounds for stroke: minX=100, maxX=300, minY=50, maxY=150. paddingDp=16, resultMarginDp=24
+        // paddedMaxX = 300 + 16 = 316. placementPointX = 316 + 24 = 340.
+        assertEquals(340f, annotation.x, 0.01f)
+
+        // Test undo removes the auto-inserted annotation
+        viewModel.undo()
+        assertEquals("Undo must remove the auto-inserted text annotation", 0, viewModel.uiState.value.canvasTextAnnotations.size)
+
+        // Test redo restores the auto-inserted annotation
+        viewModel.redo()
+        assertEquals("Redo must restore the auto-inserted text annotation", 1, viewModel.uiState.value.canvasTextAnnotations.size)
     }
 
     @Test

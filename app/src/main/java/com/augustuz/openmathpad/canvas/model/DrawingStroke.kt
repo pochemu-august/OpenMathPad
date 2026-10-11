@@ -2,6 +2,9 @@ package com.augustuz.openmathpad.canvas.model
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import com.augustuz.openmathpad.canvas.processing.BezierSmoother
 import java.util.UUID
 
@@ -31,6 +34,32 @@ data class DrawingStroke(
     }
 
     /**
+     * Lazily cached stroke width uniformity check to avoid iterator/lambda allocations during draw.
+     */
+    val isUniformWidth: Boolean by lazy {
+        if (points.size <= 1) return@lazy true
+        var minW = Float.MAX_VALUE
+        var maxW = Float.MIN_VALUE
+        for (i in points.indices) {
+            val w = points[i].width
+            if (w < minW) minW = w
+            if (w > maxW) maxW = w
+        }
+        (maxW - minW) < 0.5f
+    }
+
+    /**
+     * Lazily cached Compose DrawScope Stroke style to eliminate allocation during 144Hz redraw loops.
+     */
+    val strokeStyle: Stroke by lazy {
+        Stroke(
+            width = baseWidth,
+            cap = StrokeCap.Round,
+            join = StrokeJoin.Round
+        )
+    }
+
+    /**
      * Axis-aligned bounding box [minX, minY, maxX, maxY] with padding.
      */
     val boundingBox: FloatArray by lazy {
@@ -39,7 +68,8 @@ data class DrawingStroke(
         var minY = Float.MAX_VALUE
         var maxX = Float.MIN_VALUE
         var maxY = Float.MIN_VALUE
-        for (p in points) {
+        for (i in points.indices) {
+            val p = points[i]
             if (p.x < minX) minX = p.x
             if (p.y < minY) minY = p.y
             if (p.x > maxX) maxX = p.x

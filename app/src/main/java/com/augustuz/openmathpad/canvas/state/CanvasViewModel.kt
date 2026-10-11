@@ -12,13 +12,14 @@ import com.augustuz.openmathpad.canvas.processing.BezierSmoother
 import com.augustuz.openmathpad.canvas.processing.PalmRejectionFilter
 import com.augustuz.openmathpad.canvas.processing.PressureSmoother
 import com.augustuz.openmathpad.canvas.processing.StrokeEraser
+import com.augustuz.openmathpad.canvas.rasterizer.CanvasRasterizer
 import com.augustuz.openmathpad.mathengine.MathEngine
 import com.augustuz.openmathpad.mathengine.model.AngleMode
 import com.augustuz.openmathpad.mathengine.model.EvaluationContext
 import com.augustuz.openmathpad.mathengine.model.MathResult
-import com.augustuz.openmathpad.mathengine.ocr.OcrBoundingBox
 import com.augustuz.openmathpad.mathengine.ocr.OcrMathEngineAdapter
-import com.augustuz.openmathpad.mathengine.ocr.OcrMathInput
+import com.augustuz.openmathpad.mathengine.ocr.OcrRecognitionResult
+import com.augustuz.openmathpad.mathengine.ocr.OnnxMathOcrEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -70,9 +71,10 @@ data class CanvasUiState(
  * ViewModel managing canvas drawing state, tool configurations, MotionEvent handling,
  * undo/redo history stacks, palm rejection diagnostics, and MathEngine integration.
  */
-class CanvasViewModel(
+class CanvasViewModel @JvmOverloads constructor(
     private val mathEngine: MathEngine = MathEngine(),
-    private val ocrAdapter: OcrMathEngineAdapter = OcrMathEngineAdapter(mathEngine)
+    private val ocrAdapter: OcrMathEngineAdapter = OnnxMathOcrEngine(mathEngine),
+    private val canvasRasterizer: CanvasRasterizer = CanvasRasterizer()
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CanvasUiState())
@@ -83,6 +85,7 @@ class CanvasViewModel(
 
     private val pressureSmoother = PressureSmoother()
     private val activePoints = mutableListOf<StrokePoint>()
+    private var currentStrokeId: String? = null
 
     /**
      * Processes incoming MotionEvent from canvas touch surface.
@@ -119,6 +122,8 @@ class CanvasViewModel(
                 saveUndoState()
                 pressureSmoother.reset()
                 activePoints.clear()
+                val strokeId = java.util.UUID.randomUUID().toString()
+                currentStrokeId = strokeId
 
                 val extracted = BezierSmoother.extractPointsFromEvent(
                     event = event,
@@ -129,13 +134,40 @@ class CanvasViewModel(
 
                 if (activeTool == CanvasTool.ERASER) {
                     eraseAtPoints(extracted, config.eraserRadius)
+                    _uiState.update { state ->
+                        state.copy(
+                            canUndo = undoStack.isNotEmpty(),
+                            canRedo = redoStack.isNotEmpty(),
+                            diagnostics = state.diagnostics.copy(
+                                lastToolType = toolType,
+                                toolTypeName = getToolTypeName(toolType),
+                                lastPressure = event.pressure,
+                                historicalPointsCount = event.historySize,
+                                acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
+                            )
+                        )
+                    }
                 } else {
                     val newStroke = createStrokeFromPoints(
                         points = activePoints.toList(),
                         tool = activeTool,
-                        config = config
+                        config = config,
+                        id = strokeId
                     )
-                    _uiState.update { it.copy(currentActiveStroke = newStroke) }
+                    _uiState.update { state ->
+                        state.copy(
+                            currentActiveStroke = newStroke,
+                            canUndo = undoStack.isNotEmpty(),
+                            canRedo = redoStack.isNotEmpty(),
+                            diagnostics = state.diagnostics.copy(
+                                lastToolType = toolType,
+                                toolTypeName = getToolTypeName(toolType),
+                                lastPressure = event.pressure,
+                                historicalPointsCount = event.historySize,
+                                acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
+                            )
+                        )
+                    }
                 }
             }
 
@@ -148,50 +180,74 @@ class CanvasViewModel(
 
                 if (activeTool == CanvasTool.ERASER) {
                     eraseAtPoints(extracted, config.eraserRadius)
+                    _uiState.update { state ->
+                        state.copy(
+                            canUndo = undoStack.isNotEmpty(),
+                            canRedo = redoStack.isNotEmpty(),
+                            diagnostics = state.diagnostics.copy(
+                                lastToolType = toolType,
+                                toolTypeName = getToolTypeName(toolType),
+                                lastPressure = event.pressure,
+                                historicalPointsCount = event.historySize,
+                                acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
+                            )
+                        )
+                    }
                 } else {
                     activePoints.addAll(extracted)
                     val updatedStroke = createStrokeFromPoints(
                         points = activePoints.toList(),
                         tool = activeTool,
-                        config = config
+                        config = config,
+                        id = currentStrokeId ?: java.util.UUID.randomUUID().toString()
                     )
-                    _uiState.update { it.copy(currentActiveStroke = updatedStroke) }
+                    _uiState.update { state ->
+                        state.copy(
+                            currentActiveStroke = updatedStroke,
+                            canUndo = undoStack.isNotEmpty(),
+                            canRedo = redoStack.isNotEmpty(),
+                            diagnostics = state.diagnostics.copy(
+                                lastToolType = toolType,
+                                toolTypeName = getToolTypeName(toolType),
+                                lastPressure = event.pressure,
+                                historicalPointsCount = event.historySize,
+                                acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
+                            )
+                        )
+                    }
                 }
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (activeTool != CanvasTool.ERASER && activePoints.isNotEmpty()) {
-                    val finalStroke = createStrokeFromPoints(
+                val finalStroke = if (activeTool != CanvasTool.ERASER && activePoints.isNotEmpty()) {
+                    createStrokeFromPoints(
                         points = activePoints.toList(),
                         tool = activeTool,
-                        config = config
+                        config = config,
+                        id = currentStrokeId ?: java.util.UUID.randomUUID().toString()
                     )
-                    _uiState.update { state ->
-                        state.copy(
-                            strokes = state.strokes + finalStroke,
-                            currentActiveStroke = null
-                        )
-                    }
                 } else {
-                    _uiState.update { it.copy(currentActiveStroke = null) }
+                    null
+                }
+
+                _uiState.update { state ->
+                    state.copy(
+                        strokes = if (finalStroke != null) state.strokes + finalStroke else state.strokes,
+                        currentActiveStroke = null,
+                        canUndo = undoStack.isNotEmpty(),
+                        canRedo = redoStack.isNotEmpty(),
+                        diagnostics = state.diagnostics.copy(
+                            lastToolType = toolType,
+                            toolTypeName = getToolTypeName(toolType),
+                            lastPressure = event.pressure,
+                            historicalPointsCount = event.historySize,
+                            acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
+                        )
+                    )
                 }
                 activePoints.clear()
+                currentStrokeId = null
             }
-        }
-
-        // Update state and input telemetry
-        _uiState.update { state ->
-            state.copy(
-                canUndo = undoStack.isNotEmpty(),
-                canRedo = redoStack.isNotEmpty(),
-                diagnostics = state.diagnostics.copy(
-                    lastToolType = toolType,
-                    toolTypeName = getToolTypeName(toolType),
-                    lastPressure = event.pressure,
-                    historicalPointsCount = event.historySize,
-                    acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
-                )
-            )
         }
 
         return true
@@ -199,6 +255,7 @@ class CanvasViewModel(
 
     private fun eraseAtPoints(points: List<StrokePoint>, radius: Float) {
         val currentStrokes = _uiState.value.strokes
+        if (currentStrokes.isEmpty()) return
         val toRemove = mutableSetOf<DrawingStroke>()
         for (pt in points) {
             val intersected = StrokeEraser.findStrokesIntersecting(currentStrokes, pt.x, pt.y, radius)
@@ -215,7 +272,8 @@ class CanvasViewModel(
     private fun createStrokeFromPoints(
         points: List<StrokePoint>,
         tool: CanvasTool,
-        config: CanvasConfig
+        config: CanvasConfig,
+        id: String? = null
     ): DrawingStroke {
         val color = when (tool) {
             CanvasTool.PEN -> config.penColor
@@ -223,12 +281,22 @@ class CanvasViewModel(
             CanvasTool.ERASER -> Color.Transparent
         }
         val width = getBaseWidthForTool(tool, config)
-        return DrawingStroke(
-            points = points,
-            color = color,
-            baseWidth = width,
-            tool = tool
-        )
+        return if (id != null) {
+            DrawingStroke(
+                id = id,
+                points = points,
+                color = color,
+                baseWidth = width,
+                tool = tool
+            )
+        } else {
+            DrawingStroke(
+                points = points,
+                color = color,
+                baseWidth = width,
+                tool = tool
+            )
+        }
     }
 
     private fun getBaseWidthForTool(tool: CanvasTool, config: CanvasConfig): Float {
@@ -270,6 +338,9 @@ class CanvasViewModel(
 
     // State History (Undo / Redo / Clear)
     private fun saveUndoState() {
+        if (undoStack.size >= MAX_UNDO_STACK_SIZE) {
+            undoStack.removeAt(0)
+        }
         undoStack.add(
             CanvasSnapshot(
                 strokes = _uiState.value.strokes.toList(),
@@ -398,43 +469,67 @@ class CanvasViewModel(
     }
 
     /**
+     * Adds a stroke directly to the canvas and records an undo snapshot.
+     */
+    fun addStroke(stroke: DrawingStroke) {
+        saveUndoState()
+        _uiState.update { state ->
+            state.copy(
+                strokes = state.strokes + stroke,
+                canUndo = undoStack.isNotEmpty(),
+                canRedo = redoStack.isNotEmpty()
+            )
+        }
+    }
+
+    /**
      * Trigger for automated handwriting formula recognition from canvas strokes.
-     * Translates stroke geometry or stroke count into a candidate math expression,
-     * processes it via [OcrMathEngineAdapter], and evaluates the formula.
+     * Translates stroke geometry or stroke count into a candidate math expression via CanvasRasterizer
+     * and OnnxMathOcrEngine/OcrMathEngineAdapter, evaluates the formula via MathEngine,
+     * and automatically places the evaluated result annotation on the canvas at the
+     * rasterized placement point with undo/redo support.
      */
     fun recognizeAndEvaluateStrokes() {
         _uiState.update { it.copy(isRecognizingHandwriting = true) }
 
         val strokes = _uiState.value.strokes
-        val candidateLatex = if (strokes.isEmpty()) {
-            if (_uiState.value.formulaText.isNotBlank()) {
-                _uiState.value.formulaText
-            } else {
-                "2 * pi * 5" // Default sample stub expression when canvas is empty
-            }
+        val rasterizedResult = canvasRasterizer.rasterizeStrokes(strokes)
+
+        val ocrRecognitionResult = if (ocrAdapter is OnnxMathOcrEngine) {
+            ocrAdapter.recognizeStrokes(strokes)
         } else {
-            // Handwriting recognition stroke heuristic stub
-            when (strokes.size) {
-                1 -> "sqrt(16) + 3^2"
-                2 -> "2 * pi * 5"
-                3 -> "sin(pi / 6) + cos(pi / 3)"
-                4 -> "x^2 + 3*x - 4"
-                else -> "integrate(x^2, 0, 5)"
+            val candidateLatex = if (strokes.isEmpty()) {
+                if (_uiState.value.formulaText.isNotBlank()) _uiState.value.formulaText else "2 * pi * 5"
+            } else {
+                when (strokes.size) {
+                    1 -> "sqrt(16) + 3^2"
+                    2 -> "2 * pi * 5"
+                    3 -> "sin(pi / 6) + cos(pi / 3)"
+                    4 -> "x^2 + 3*x - 4"
+                    else -> "integrate(x^2, 0, 5)"
+                }
             }
+            OcrRecognitionResult(
+                latexExpression = candidateLatex,
+                confidenceScore = 0.98f,
+                isHeuristicFallback = true
+            )
         }
 
-        val ocrInput = OcrMathInput(
-            latexExpression = candidateLatex,
-            confidenceScore = 0.98f,
-            boundingBox = OcrBoundingBox(0f, 0f, 500f, 200f)
-        )
+        val latex = if (ocrRecognitionResult.latexExpression.isNotBlank()) {
+            ocrRecognitionResult.latexExpression
+        } else if (_uiState.value.formulaText.isNotBlank()) {
+            _uiState.value.formulaText
+        } else {
+            "2 * pi * 5"
+        }
 
-        val ocrResult = ocrAdapter.processOcrOutput(ocrInput, _uiState.value.evaluationContext)
+        val mathResult = mathEngine.evaluate(latex, _uiState.value.evaluationContext)
 
         _uiState.update { state ->
-            val updatedHistory = if (ocrResult.mathResult is MathResult.Success) {
-                if (state.calculationHistory.firstOrNull() != ocrResult.mathResult) {
-                    listOf(ocrResult.mathResult) + state.calculationHistory
+            val updatedHistory = if (mathResult is MathResult.Success) {
+                if (state.calculationHistory.firstOrNull() != mathResult) {
+                    listOf(mathResult) + state.calculationHistory
                 } else {
                     state.calculationHistory
                 }
@@ -443,12 +538,34 @@ class CanvasViewModel(
             }
 
             state.copy(
-                formulaText = candidateLatex,
-                currentResult = ocrResult.mathResult,
+                formulaText = latex,
+                currentResult = mathResult,
                 calculationHistory = updatedHistory,
                 isRecognizingHandwriting = false,
                 isOverlayVisible = true
             )
+        }
+
+        if (mathResult is MathResult.Success) {
+            val formatted = mathResult.formattedResult
+            val resultText = if (formatted.startsWith("=")) formatted else "= $formatted"
+
+            saveUndoState()
+
+            val annotation = CanvasTextAnnotation(
+                text = resultText,
+                x = rasterizedResult.placementPointX,
+                y = rasterizedResult.placementPointY,
+                color = _uiState.value.config.penColor
+            )
+
+            _uiState.update { state ->
+                state.copy(
+                    canvasTextAnnotations = state.canvasTextAnnotations + annotation,
+                    canUndo = undoStack.isNotEmpty(),
+                    canRedo = redoStack.isNotEmpty()
+                )
+            }
         }
     }
 
@@ -540,6 +657,16 @@ class CanvasViewModel(
         _uiState.update { it.copy(calculationHistory = emptyList()) }
     }
 
+    override fun onCleared() {
+        super.onCleared()
+        undoStack.clear()
+        redoStack.clear()
+        activePoints.clear()
+        if (ocrAdapter is OnnxMathOcrEngine) {
+            ocrAdapter.close()
+        }
+    }
+
     private fun getToolTypeName(toolType: Int): String {
         return when (toolType) {
             MotionEvent.TOOL_TYPE_STYLUS -> "STYLUS"
@@ -549,5 +676,9 @@ class CanvasViewModel(
             MotionEvent.TOOL_TYPE_UNKNOWN -> "UNKNOWN"
             else -> "OTHER($toolType)"
         }
+    }
+
+    companion object {
+        private const val MAX_UNDO_STACK_SIZE = 50
     }
 }

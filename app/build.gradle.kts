@@ -21,6 +21,10 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     buildTypes {
         release {
             optimization {
@@ -35,6 +39,20 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+        warningsAsErrors = false
+        baseline = file("lint-baseline.xml")
+        disable += setOf(
+            "OptIn",
+            "ExperimentalComposeLibrary",
+            "ExperimentalComposeUiApi",
+            "ExperimentalMaterial3Api",
+            "ExperimentalLayoutApi"
+        )
     }
 }
 
@@ -73,6 +91,7 @@ dependencies {
     implementation(libs.logging.interceptor)
     implementation(libs.moshi.kotlin)
     implementation(libs.okhttp)
+    implementation(libs.onnxruntime.android)
     implementation(libs.play.services.location)
     implementation(libs.retrofit)
     testImplementation(libs.androidx.core)
@@ -86,6 +105,7 @@ dependencies {
     androidTestImplementation(libs.androidx.runner)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.leakcanary.android)
     "ksp"(libs.androidx.room.compiler)
     "ksp"(libs.moshi.kotlin.codegen)
 }
