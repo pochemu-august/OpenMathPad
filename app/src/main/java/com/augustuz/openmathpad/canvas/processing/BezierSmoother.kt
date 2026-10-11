@@ -21,32 +21,42 @@ object BezierSmoother {
     fun extractPointsFromEvent(
         event: MotionEvent,
         baseWidth: Float,
-        pressureSmoother: PressureSmoother
+        pressureSmoother: PressureSmoother,
+        pointerIndex: Int = 0,
+        panOffsetX: Float = 0f,
+        panOffsetY: Float = 0f,
+        zoomScale: Float = 1.0f
     ): List<StrokePoint> {
         val historySize = event.historySize
         val points = ArrayList<StrokePoint>(historySize + 1)
-        val toolType = if (event.pointerCount > 0) event.getToolType(0) else MotionEvent.TOOL_TYPE_UNKNOWN
+        val pIdx = if (event.pointerCount > 0) pointerIndex.coerceIn(0, event.pointerCount - 1) else 0
+        val toolType = if (event.pointerCount > 0) event.getToolType(pIdx) else MotionEvent.TOOL_TYPE_UNKNOWN
         val isStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
+        val scale = if (zoomScale <= 0f) 1.0f else zoomScale
 
         // 1. Process historical points
         for (h in 0 until historySize) {
-            val hX = event.getHistoricalX(h)
-            val hY = event.getHistoricalY(h)
-            val hPressure = event.getHistoricalPressure(h)
+            val hX = if (event.pointerCount > 1) event.getHistoricalX(pIdx, h) else event.getHistoricalX(h)
+            val hY = if (event.pointerCount > 1) event.getHistoricalY(pIdx, h) else event.getHistoricalY(h)
+            val sceneHX = (hX - panOffsetX) / scale
+            val sceneHY = (hY - panOffsetY) / scale
+            val hPressure = if (event.pointerCount > 1) event.getHistoricalPressure(pIdx, h) else event.getHistoricalPressure(h)
             val hTime = event.getHistoricalEventTime(h)
 
             pressureSmoother.update(hPressure, baseWidth, isStylus)
-            points.add(StrokePoint(hX, hY, pressureSmoother.currentSmoothedPressure, pressureSmoother.currentCalculatedWidth, hTime))
+            points.add(StrokePoint(sceneHX, sceneHY, pressureSmoother.currentSmoothedPressure, pressureSmoother.currentCalculatedWidth, hTime))
         }
 
         // 2. Process current event point
-        val cX = event.x
-        val cY = event.y
-        val cPressure = event.pressure
+        val cX = event.getX(pIdx)
+        val cY = event.getY(pIdx)
+        val sceneCX = (cX - panOffsetX) / scale
+        val sceneCY = (cY - panOffsetY) / scale
+        val cPressure = event.getPressure(pIdx)
         val cTime = event.eventTime
 
         pressureSmoother.update(cPressure, baseWidth, isStylus)
-        points.add(StrokePoint(cX, cY, pressureSmoother.currentSmoothedPressure, pressureSmoother.currentCalculatedWidth, cTime))
+        points.add(StrokePoint(sceneCX, sceneCY, pressureSmoother.currentSmoothedPressure, pressureSmoother.currentCalculatedWidth, cTime))
 
         return points
     }

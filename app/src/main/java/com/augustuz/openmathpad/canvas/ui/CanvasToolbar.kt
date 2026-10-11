@@ -16,18 +16,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoNotDisturb
 import androidx.compose.material.icons.filled.Functions
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,6 +41,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -54,13 +58,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.augustuz.openmathpad.canvas.model.CanvasTool
 import com.augustuz.openmathpad.canvas.state.CanvasUiState
+import kotlin.math.roundToInt
 
 val PresetPenColors = listOf(
     Color(0xFF1E88E5), // Material Blue
-    Color(0xFF000000), // Pure Black
+    Color(0xFF212121), // Charcoal / Graphite
     Color(0xFFE53935), // Crimson Red
-    Color(0xFF43A047), // Vivid Green
-    Color(0xFF8E24AA), // Deep Purple
+    Color(0xFF43A047), // Vivid Emerald Green
+    Color(0xFF8E24AA), // Deep Violet
     Color(0xFFFB8C00)  // Amber Orange
 )
 
@@ -70,6 +75,11 @@ val PresetStrokeWidths = listOf(
     12.0f to "Thick"
 )
 
+/**
+ * Minimalist floating toolbar for Infinite Canvas:
+ * Pen, Highlighter, Stroke Width, Color Palette, Undo, Redo, Clear,
+ * Add Image / Task button, and Quick Zoom reset.
+ */
 @Composable
 fun CanvasToolbar(
     uiState: CanvasUiState,
@@ -81,6 +91,8 @@ fun CanvasToolbar(
     onRedo: () -> Unit,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
+    onAddImageClicked: () -> Unit = {},
+    onResetZoom: () -> Unit = {},
     onCalculateClicked: () -> Unit = {}
 ) {
     Card(
@@ -92,10 +104,10 @@ fun CanvasToolbar(
         )
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Top Row: Tool Selection & Action Controls (Horizontally Scrollable)
+            // Top Row: Tool Selection & Action Controls
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -154,9 +166,16 @@ fun CanvasToolbar(
                     )
                 )
 
-                // Calculate Action Button
+                VerticalDivider(
+                    modifier = Modifier
+                        .height(24.dp)
+                        .padding(horizontal = 2.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
+
+                // Add Image / Task Button
                 Button(
-                    onClick = onCalculateClicked,
+                    onClick = onAddImageClicked,
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
@@ -164,22 +183,53 @@ fun CanvasToolbar(
                     )
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Functions,
-                        contentDescription = "Calculate Formula",
+                        imageVector = Icons.Default.AddPhotoAlternate,
+                        contentDescription = "Add Image or Task",
                         modifier = Modifier.size(18.dp)
                     )
-                    Spacer(modifier = Modifier.size(4.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Calculate",
-                        fontWeight = FontWeight.Bold,
+                        text = "Add Task",
+                        fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp
+                    )
+                }
+
+                // Quick Zoom Reset Button
+                val zoomPct = (uiState.zoomScale * 100f).roundToInt()
+                OutlinedButton(
+                    onClick = onResetZoom,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.RestartAlt,
+                        contentDescription = "Reset Zoom to 100%",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "$zoomPct%",
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 12.sp
+                    )
+                }
+
+                // Math Overlay Calculator Toggle
+                IconButton(onClick = onCalculateClicked) {
+                    Icon(
+                        imageVector = Icons.Default.Functions,
+                        contentDescription = "Math Calculator",
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 }
 
                 VerticalDivider(
                     modifier = Modifier
                         .height(24.dp)
-                        .padding(horizontal = 4.dp),
+                        .padding(horizontal = 2.dp),
                     color = MaterialTheme.colorScheme.outlineVariant
                 )
 
@@ -198,14 +248,18 @@ fun CanvasToolbar(
                     )
                 }
 
+                val hasContent = uiState.strokes.isNotEmpty() ||
+                        uiState.canvasTextAnnotations.isNotEmpty() ||
+                        uiState.images.isNotEmpty()
+
                 IconButton(
                     onClick = onClear,
-                    enabled = uiState.strokes.isNotEmpty() || uiState.canvasTextAnnotations.isNotEmpty()
+                    enabled = hasContent
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
                         contentDescription = "Clear Canvas",
-                        tint = if (uiState.strokes.isNotEmpty() || uiState.canvasTextAnnotations.isNotEmpty()) {
+                        tint = if (hasContent) {
                             MaterialTheme.colorScheme.error
                         } else {
                             MaterialTheme.colorScheme.outline
@@ -214,7 +268,7 @@ fun CanvasToolbar(
                 }
             }
 
-            // Bottom Row: Color Palette, Thickness, and Touch Mode Toggle (Horizontally Scrollable)
+            // Bottom Row: Color Palette, Thickness, and Palm Rejection / Touch Toggle
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -222,7 +276,7 @@ fun CanvasToolbar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Color Swatches (if Pen or Highlighter active)
+                // Color Swatches
                 AnimatedVisibility(
                     visible = uiState.config.activeTool != CanvasTool.ERASER,
                     enter = fadeIn(),
@@ -236,7 +290,7 @@ fun CanvasToolbar(
                             val isSelected = uiState.config.penColor == color
                             Box(
                                 modifier = Modifier
-                                    .size(28.dp)
+                                    .size(26.dp)
                                     .clip(CircleShape)
                                     .background(color)
                                     .then(
@@ -299,7 +353,7 @@ fun CanvasToolbar(
                     )
                 }
 
-                // Touch-Drawing Toggle Mode (Hardware Palm Rejection Toggle)
+                // Touch-Drawing Toggle Mode (Hardware Palm Rejection Mode)
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = if (uiState.config.touchModeEnabled) {
@@ -326,7 +380,7 @@ fun CanvasToolbar(
                         )
 
                         Text(
-                            text = if (uiState.config.touchModeEnabled) "Touch On" else "Stylus Only",
+                            text = if (uiState.config.touchModeEnabled) "Touch On" else "Stylus Only (Palm Reject)",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = if (uiState.config.touchModeEnabled) {
@@ -351,9 +405,9 @@ fun CanvasToolbar(
     }
 }
 
-@Preview(showBackground = true, widthDp = 360, name = "Compact Width (Phone / Split Screen)")
+@Preview(showBackground = true, widthDp = 800)
 @Composable
-private fun CanvasToolbarCompactPreview() {
+private fun CanvasToolbarPreview() {
     MaterialTheme {
         Box(modifier = Modifier.padding(16.dp)) {
             CanvasToolbar(
@@ -364,28 +418,7 @@ private fun CanvasToolbarCompactPreview() {
                 onTouchModeToggled = {},
                 onUndo = {},
                 onRedo = {},
-                onClear = {},
-                onCalculateClicked = {}
-            )
-        }
-    }
-}
-
-@Preview(showBackground = true, widthDp = 800, name = "Expanded Width (Tablet / Wide Screen)")
-@Composable
-private fun CanvasToolbarExpandedPreview() {
-    MaterialTheme {
-        Box(modifier = Modifier.padding(16.dp)) {
-            CanvasToolbar(
-                uiState = CanvasUiState(),
-                onToolSelected = {},
-                onColorSelected = {},
-                onStrokeWidthChanged = {},
-                onTouchModeToggled = {},
-                onUndo = {},
-                onRedo = {},
-                onClear = {},
-                onCalculateClicked = {}
+                onClear = {}
             )
         }
     }

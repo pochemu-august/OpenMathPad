@@ -76,12 +76,12 @@ class MathLexer(
                 continue
             }
 
-            // 2. Identifiers (functions, constants, variables)
-            if (ch.isLetter() || ch == '_' || ch == 'π' || ch == 'τ' || ch == 'ϕ' || ch == 'φ') {
+            // 2. Identifiers (functions, constants, variables including '?')
+            if (ch.isLetter() || ch == '_' || ch == 'π' || ch == 'τ' || ch == 'ϕ' || ch == 'φ' || ch == '?') {
                 var idStr = ""
                 while (i < len) {
                     val c = input[i]
-                    if (c.isLetterOrDigit() || c == '_' || c == 'π' || c == 'τ' || c == 'ϕ' || c == 'φ') {
+                    if (c.isLetterOrDigit() || c == '_' || c == 'π' || c == 'τ' || c == 'ϕ' || c == 'φ' || c == '?') {
                         idStr += c
                         i++
                     } else {

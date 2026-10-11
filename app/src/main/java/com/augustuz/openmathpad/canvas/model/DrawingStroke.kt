@@ -5,7 +5,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import com.augustuz.openmathpad.canvas.processing.BezierSmoother
+import com.augustuz.openmathpad.canvas.processing.StrokeBeautifier
 import java.util.UUID
 
 /**
@@ -27,10 +27,10 @@ data class DrawingStroke(
     val alpha: Float = if (tool == CanvasTool.HIGHLIGHTER) 0.4f else 1.0f
 ) {
     /**
-     * Lazily calculated Bezier curve path for smooth rendering.
+     * Lazily calculated smooth curve path for rendering.
      */
     val path: Path by lazy {
-        BezierSmoother.buildBezierPath(points)
+        StrokeBeautifier.buildSmoothPath(points)
     }
 
     /**

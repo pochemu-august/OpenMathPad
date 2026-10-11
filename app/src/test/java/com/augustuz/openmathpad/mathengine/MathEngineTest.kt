@@ -179,4 +179,40 @@ class MathEngineTest {
         assertTrue(res.evaluationSteps.isNotEmpty())
         assertNotNull(res.ast)
     }
+
+    @Test
+    fun testLinearEquationSolving() {
+        val res = engine.evaluate("2x + 5 = 15") as MathResult.Success
+        assertEquals(5.0, res.value, 1e-9)
+        assertEquals("x = 5", res.formattedResult)
+        assertEquals("x = 5", res.symbolicRepresentation)
+    }
+
+    @Test
+    fun testWildcardVariableSolving() {
+        val res = engine.evaluate("3 * ? = 9") as MathResult.Success
+        assertEquals(3.0, res.value, 1e-9)
+        assertEquals("? = 3", res.formattedResult)
+    }
+
+    @Test
+    fun testEquationWithVariableOnBothSides() {
+        val res = engine.evaluate("5x - 4 = 2x + 8") as MathResult.Success
+        assertEquals(4.0, res.value, 1e-9)
+        assertEquals("x = 4", res.formattedResult)
+    }
+
+    @Test
+    fun testQuadraticEquationSolving() {
+        // x^2 - 4 = 0 -> roots are 2 and -2
+        val res = engine.evaluate("x^2 - 4 = 0") as MathResult.Success
+        assertEquals(2.0, res.value, 1e-9)
+        assertTrue(res.formattedResult.contains("x = 2") && res.formattedResult.contains("-2"))
+
+        // x^2 - 6x + 9 = 0 -> root is 3
+        val resSingle = engine.evaluate("x^2 - 6x + 9 = 0") as MathResult.Success
+        assertEquals(3.0, resSingle.value, 1e-9)
+        assertEquals("x = 3", resSingle.formattedResult)
+    }
 }
+

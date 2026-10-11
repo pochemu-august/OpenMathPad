@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.ui.Modifier
-import com.augustuz.openmathpad.canvas.ui.StylusCanvas
+import com.augustuz.openmathpad.canvas.ui.InfiniteCanvas
 import com.augustuz.openmathpad.ui.theme.OpenMathPadTheme
 
 class MainActivity : ComponentActivity() {
@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             OpenMathPadTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    StylusCanvas(
+                    InfiniteCanvas(
                         modifier = Modifier.padding(innerPadding)
                     )
                 }

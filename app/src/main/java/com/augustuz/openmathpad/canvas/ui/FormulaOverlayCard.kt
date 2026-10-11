@@ -95,7 +95,7 @@ fun FormulaOverlayCard(
     uiState: CanvasUiState,
     onFormulaChange: (String) -> Unit,
     onEvaluateFormula: (String?) -> Unit,
-    onRecognizeStrokes: () -> Unit,
+    onRecognizeStrokes: () -> Unit = {},
     onToggleExpanded: () -> Unit,
     onCloseOverlay: () -> Unit,
     onSetAngleMode: (AngleMode) -> Unit,
@@ -103,6 +103,8 @@ fun FormulaOverlayCard(
     onRemoveVariable: (String) -> Unit,
     onInsertResultToCanvas: (String) -> Unit,
     onClearHistory: () -> Unit,
+    onConvertToTypeset: () -> Unit = {},
+    onToggleTypesetMode: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val clipboardManager = LocalClipboardManager.current
@@ -221,25 +223,6 @@ fun FormulaOverlayCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        // Handwriting Recognize Button
-                        IconButton(
-                            onClick = onRecognizeStrokes,
-                            enabled = !uiState.isRecognizingHandwriting
-                        ) {
-                            if (uiState.isRecognizingHandwriting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.AutoFixHigh,
-                                    contentDescription = "Recognize Canvas Strokes",
-                                    tint = MaterialTheme.colorScheme.secondary
-                                )
-                            }
-                        }
-
                         // Evaluate Trigger Button
                         IconButton(
                             onClick = { onEvaluateFormula(null) },
@@ -274,7 +257,9 @@ fun FormulaOverlayCard(
                     },
                     onInsertToCanvas = { resultText ->
                         onInsertResultToCanvas(resultText)
-                    }
+                    },
+                    onConvertToTypeset = onConvertToTypeset,
+                    onToggleTypesetMode = onToggleTypesetMode
                 )
             }
 
@@ -340,8 +325,11 @@ fun FormulaOverlayCard(
 private fun ResultDisplaySection(
     result: MathResult,
     copiedToClipboard: Boolean,
+    isTypesetReplaceMode: Boolean = true,
     onCopyResult: (String) -> Unit,
-    onInsertToCanvas: (String) -> Unit
+    onInsertToCanvas: (String) -> Unit,
+    onConvertToTypeset: () -> Unit = {},
+    onToggleTypesetMode: () -> Unit = {}
 ) {
     when (result) {
         is MathResult.Success -> {
@@ -377,8 +365,14 @@ private fun ResultDisplaySection(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
+                    val resultText = if (result.formattedResult.startsWith("=") || result.formattedResult.contains("=")) {
+                        result.formattedResult
+                    } else {
+                        "= ${result.formattedResult}"
+                    }
+
                     Text(
-                        text = "= ${result.formattedResult}",
+                        text = resultText,
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
@@ -405,9 +399,28 @@ private fun ResultDisplaySection(
                             Text(if (copiedToClipboard) "Copied!" else "Copy", fontSize = 12.sp)
                         }
 
+                        // Convert to Typeset Button
+                        OutlinedButton(
+                            onClick = onConvertToTypeset,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoFixHigh,
+                                contentDescription = "Convert to Typeset",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Typeset", fontSize = 12.sp)
+                        }
+
                         // Insert to Canvas Button
+                        val insertText = if (result.formattedResult.contains("=")) {
+                            result.formattedResult
+                        } else {
+                            "${result.rawExpression} = ${result.formattedResult}"
+                        }
                         Button(
-                            onClick = { onInsertToCanvas("${result.rawExpression} = ${result.formattedResult}") },
+                            onClick = { onInsertToCanvas(insertText) },
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary
@@ -419,9 +432,27 @@ private fun ResultDisplaySection(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Insert to Canvas", fontSize = 12.sp)
+                            Text("Insert", fontSize = 12.sp)
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Typeset Mode Toggle Chip
+                    FilterChip(
+                        selected = isTypesetReplaceMode,
+                        onClick = onToggleTypesetMode,
+                        label = {
+                            Text(
+                                text = if (isTypesetReplaceMode) "Mode: Replace Strokes" else "Mode: Overlay Typeset",
+                                fontSize = 11.sp
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                            selectedLabelColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
                 }
             }
         }
