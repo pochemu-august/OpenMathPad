@@ -22,14 +22,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.TrendingFlat
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoNotDisturb
+import androidx.compose.material.icons.filled.GridOff
+import androidx.compose.material.icons.filled.GridOn
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.ShowChart
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,36 +66,58 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.augustuz.openmathpad.canvas.model.CanvasTool
+import com.augustuz.openmathpad.canvas.model.GeometricShape
 import com.augustuz.openmathpad.canvas.state.CanvasUiState
 import kotlin.math.roundToInt
 
+// Classic School Notebook Pen Palette
 val PresetPenColors = listOf(
-    Color(0xFF1E88E5), // Material Blue
-    Color(0xFF212121), // Charcoal / Graphite
-    Color(0xFFE53935), // Crimson Red
-    Color(0xFF43A047), // Vivid Emerald Green
-    Color(0xFF8E24AA), // Deep Violet
+    Color(0xFF1565C0), // Classic School Royal Blue (Default)
+    Color(0xFF1A1A1A), // Pitch Black
+    Color(0xFFC62828), // Crimson Red
+    Color(0xFF2E7D32), // Forest Green
+    Color(0xFF7B1FA2), // Vibrant Violet
     Color(0xFFFB8C00)  // Amber Orange
 )
 
-val PresetStrokeWidths = listOf(
-    3.0f to "Thin",
-    6.0f to "Medium",
-    12.0f to "Thick"
+val PresetPenWidths = listOf(
+    1.5f to "Thin 1.5",
+    2.5f to "Normal 2.5",
+    4.0f to "Thick 4.0"
+)
+
+// Semi-Transparent Highlighter Palette (45% alpha)
+val PresetHighlighterColors = listOf(
+    Color(0xFFFFEB3B).copy(alpha = 0.45f), // Fluorescent Yellow
+    Color(0xFF69F0AE).copy(alpha = 0.45f), // Neon Green
+    Color(0xFFFF80AB).copy(alpha = 0.45f), // Soft Pink
+    Color(0xFF80D8FF).copy(alpha = 0.45f), // Pastel Blue
+    Color(0xFFFFB74D).copy(alpha = 0.45f)  // Warm Orange
+)
+
+val PresetHighlighterWidths = listOf(
+    12.0f to "Thin 12",
+    20.0f to "Normal 20",
+    32.0f to "Thick 32"
 )
 
 /**
- * Minimalist floating toolbar for Infinite Canvas:
- * Pen, Highlighter, Stroke Width, Color Palette, Undo, Redo, Clear,
- * Add Image / Task button, and Quick Zoom reset.
+ * Modern floating pill toolbar for GeoGebra-inspired Math Scratchpad:
+ * Pen, Layered Highlighter, Eraser, Geometric Shapes (Line, Arrow, Box, Circle),
+ * Squared Paper Grid, Cartesian Axes (XY), Task Image Import, Theme Toggle, Undo/Redo/Clear.
  */
 @Composable
 fun CanvasToolbar(
     uiState: CanvasUiState,
     onToolSelected: (CanvasTool) -> Unit,
+    onActiveShapeSelected: (GeometricShape) -> Unit = {},
     onColorSelected: (Color) -> Unit,
     onStrokeWidthChanged: (Float) -> Unit,
     onTouchModeToggled: () -> Unit,
+    onToggleRulerMode: () -> Unit,
+    onToggleGrid: () -> Unit,
+    onToggleCoordinateAxes: () -> Unit,
+    onToggleDarkMode: () -> Unit = {},
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onClear: () -> Unit,
@@ -93,19 +125,30 @@ fun CanvasToolbar(
     onAddImageClicked: () -> Unit = {},
     onResetZoom: () -> Unit = {}
 ) {
+    val isDark = uiState.config.isDarkMode
+
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(28.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            containerColor = if (isDark) {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            } else {
+                Color.White
+            }
+        ),
+        border = CardDefaults.outlinedCardBorder().copy(
+            brush = androidx.compose.ui.graphics.SolidColor(
+                if (isDark) Color(0xFF383C45) else Color(0xFFE2E4E9)
+            )
         )
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Top Row: Tool Selection & Action Controls
+            // Top Row: Core Tools, Shapes, Grid, Axes, Theme, Media, Canvas Controls
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -113,15 +156,18 @@ fun CanvasToolbar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Pen Selector
+                // 1. Pen Tool (Ballpoint Pen)
                 FilterChip(
-                    selected = uiState.config.activeTool == CanvasTool.PEN,
-                    onClick = { onToolSelected(CanvasTool.PEN) },
+                    selected = uiState.config.activeTool == CanvasTool.PEN && uiState.config.activeShape == GeometricShape.NONE,
+                    onClick = {
+                        onToolSelected(CanvasTool.PEN)
+                        onActiveShapeSelected(GeometricShape.NONE)
+                    },
                     label = { Text("Pen") },
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Default.Create,
-                            contentDescription = "Pen Tool"
+                            contentDescription = "Ballpoint Pen"
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
@@ -130,10 +176,13 @@ fun CanvasToolbar(
                     )
                 )
 
-                // Highlighter Selector
+                // 2. Highlighter Tool (Layered Under Ink)
                 FilterChip(
                     selected = uiState.config.activeTool == CanvasTool.HIGHLIGHTER,
-                    onClick = { onToolSelected(CanvasTool.HIGHLIGHTER) },
+                    onClick = {
+                        onToolSelected(CanvasTool.HIGHLIGHTER)
+                        onActiveShapeSelected(GeometricShape.NONE)
+                    },
                     label = { Text("Highlighter") },
                     leadingIcon = {
                         Icon(
@@ -147,10 +196,13 @@ fun CanvasToolbar(
                     )
                 )
 
-                // Eraser Selector
+                // 3. Eraser Tool
                 FilterChip(
                     selected = uiState.config.activeTool == CanvasTool.ERASER,
-                    onClick = { onToolSelected(CanvasTool.ERASER) },
+                    onClick = {
+                        onToolSelected(CanvasTool.ERASER)
+                        onActiveShapeSelected(GeometricShape.NONE)
+                    },
                     label = { Text("Eraser") },
                     leadingIcon = {
                         Icon(
@@ -171,7 +223,117 @@ fun CanvasToolbar(
                     color = MaterialTheme.colorScheme.outlineVariant
                 )
 
-                // Add Image / Task Button
+                // 4. Geometric Shapes (GeoGebra Tools)
+                FilterChip(
+                    selected = uiState.config.activeShape == GeometricShape.LINE,
+                    onClick = {
+                        val next = if (uiState.config.activeShape == GeometricShape.LINE) GeometricShape.NONE else GeometricShape.LINE
+                        onActiveShapeSelected(next)
+                    },
+                    label = { Text("Line") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Straighten,
+                            contentDescription = "Straight Line"
+                        )
+                    }
+                )
+
+                FilterChip(
+                    selected = uiState.config.activeShape == GeometricShape.VECTOR_ARROW,
+                    onClick = {
+                        val next = if (uiState.config.activeShape == GeometricShape.VECTOR_ARROW) GeometricShape.NONE else GeometricShape.VECTOR_ARROW
+                        onActiveShapeSelected(next)
+                    },
+                    label = { Text("Vector") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.TrendingFlat,
+                            contentDescription = "Vector Arrow"
+                        )
+                    }
+                )
+
+                FilterChip(
+                    selected = uiState.config.activeShape == GeometricShape.RECTANGLE,
+                    onClick = {
+                        val next = if (uiState.config.activeShape == GeometricShape.RECTANGLE) GeometricShape.NONE else GeometricShape.RECTANGLE
+                        onActiveShapeSelected(next)
+                    },
+                    label = { Text("Box") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.CropSquare,
+                            contentDescription = "Rectangle Box"
+                        )
+                    }
+                )
+
+                FilterChip(
+                    selected = uiState.config.activeShape == GeometricShape.CIRCLE,
+                    onClick = {
+                        val next = if (uiState.config.activeShape == GeometricShape.CIRCLE) GeometricShape.NONE else GeometricShape.CIRCLE
+                        onActiveShapeSelected(next)
+                    },
+                    label = { Text("Circle") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.RadioButtonUnchecked,
+                            contentDescription = "Circle"
+                        )
+                    }
+                )
+
+                VerticalDivider(
+                    modifier = Modifier
+                        .height(24.dp)
+                        .padding(horizontal = 2.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
+
+                // 5. Classic Notebook Grid Toggle (Squared / Blank)
+                FilterChip(
+                    selected = uiState.config.showGrid,
+                    onClick = onToggleGrid,
+                    label = { Text(if (uiState.config.showGrid) "Grid" else "Blank") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = if (uiState.config.showGrid) Icons.Default.GridOn else Icons.Default.GridOff,
+                            contentDescription = "Grid Toggle"
+                        )
+                    }
+                )
+
+                // 6. Cartesian Coordinate Axes Toggle (XY)
+                FilterChip(
+                    selected = uiState.config.showCoordinateAxes,
+                    onClick = onToggleCoordinateAxes,
+                    label = { Text("XY Axes") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Timeline,
+                            contentDescription = "Cartesian Coordinate Axes"
+                        )
+                    }
+                )
+
+                // 7. Dark / Light Theme Toggle
+                IconButton(onClick = onToggleDarkMode) {
+                    Icon(
+                        imageVector = if (isDark) Icons.Default.LightMode else Icons.Default.DarkMode,
+                        contentDescription = "Toggle Dark/Light Mode",
+                        tint = if (isDark) Color(0xFFFFD54F) else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                VerticalDivider(
+                    modifier = Modifier
+                        .height(24.dp)
+                        .padding(horizontal = 2.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
+
+                // 8. Add Task / Image Insertion Button
                 Button(
                     onClick = onAddImageClicked,
                     shape = RoundedCornerShape(16.dp),
@@ -182,7 +344,7 @@ fun CanvasToolbar(
                 ) {
                     Icon(
                         imageVector = Icons.Default.AddPhotoAlternate,
-                        contentDescription = "Add Image or Task",
+                        contentDescription = "Add Task Image",
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
@@ -193,7 +355,7 @@ fun CanvasToolbar(
                     )
                 }
 
-                // Quick Zoom Reset Button
+                // 9. Quick Zoom Reset Button
                 val zoomPct = (uiState.zoomScale * 100f).roundToInt()
                 OutlinedButton(
                     onClick = onResetZoom,
@@ -215,7 +377,6 @@ fun CanvasToolbar(
                     )
                 }
 
-
                 VerticalDivider(
                     modifier = Modifier
                         .height(24.dp)
@@ -223,7 +384,7 @@ fun CanvasToolbar(
                     color = MaterialTheme.colorScheme.outlineVariant
                 )
 
-                // Undo / Redo / Clear
+                // 10. Undo / Redo / Clear
                 IconButton(onClick = onUndo, enabled = uiState.canUndo) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Undo,
@@ -258,7 +419,7 @@ fun CanvasToolbar(
                 }
             }
 
-            // Bottom Row: Color Palette, Thickness, and Palm Rejection / Touch Toggle
+            // Bottom Row: Dynamic Color Swatches, Thickness Presets, and Palm Rejection Mode
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -266,18 +427,22 @@ fun CanvasToolbar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Color Swatches
+                // Color Swatches (Pen or Highlighter palette)
                 AnimatedVisibility(
                     visible = uiState.config.activeTool != CanvasTool.ERASER,
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {
+                    val isHighlighter = uiState.config.activeTool == CanvasTool.HIGHLIGHTER
+                    val colors = if (isHighlighter) PresetHighlighterColors else PresetPenColors
+                    val currentColor = if (isHighlighter) uiState.config.highlighterColor else uiState.config.penColor
+
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        PresetPenColors.forEach { color ->
-                            val isSelected = uiState.config.penColor == color
+                        colors.forEach { color ->
+                            val isSelected = currentColor == color
                             Box(
                                 modifier = Modifier
                                     .size(26.dp)
@@ -310,12 +475,16 @@ fun CanvasToolbar(
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {
+                    val isHighlighter = uiState.config.activeTool == CanvasTool.HIGHLIGHTER
+                    val widths = if (isHighlighter) PresetHighlighterWidths else PresetPenWidths
+                    val currentWidth = if (isHighlighter) uiState.config.highlighterWidth else uiState.config.penWidth
+
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        PresetStrokeWidths.forEach { (width, label) ->
-                            val isSelected = uiState.config.penWidth == width
+                        widths.forEach { (width, label) ->
+                            val isSelected = currentWidth == width
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
@@ -406,6 +575,9 @@ private fun CanvasToolbarPreview() {
                 onColorSelected = {},
                 onStrokeWidthChanged = {},
                 onTouchModeToggled = {},
+                onToggleRulerMode = {},
+                onToggleGrid = {},
+                onToggleCoordinateAxes = {},
                 onUndo = {},
                 onRedo = {},
                 onClear = {}

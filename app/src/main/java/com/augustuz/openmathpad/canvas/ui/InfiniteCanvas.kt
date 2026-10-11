@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -44,6 +45,7 @@ import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -70,12 +72,13 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Infinite Canvas Note-taking & STEM Scratchpad supporting:
+ * GeoGebra-Inspired Infinite Canvas Math & Physics Scratchpad supporting:
  * - Infinite pan & zoom coordinate transformations (0.2x to 5.0x).
  * - Touch vs Stylus separation with 100% palm rejection.
- * - Real-time streamline stabilization & calligraphic inking with tapered segmented ribbons.
+ * - Crisp, uniform Ballpoint Pen inking with Midpoint Quadratic Bezier smoothing.
+ * - Draw & Hold line straightening and magnetic vertex/grid snapping (GeoGebra-Lite).
+ * - Classic Squared Notebook Grid (тетрадь в клеточку) & Cartesian Coordinate Axes.
  * - Interactive draggable and resizable problem screenshot cards with proportional 4-corner scaling.
- * - High-performance infinite coordinate dot grid.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -84,60 +87,102 @@ fun InfiniteCanvas(
     viewModel: CanvasViewModel = viewModel(),
     showToolbar: Boolean = true,
     showDiagnostics: Boolean = true,
-    backgroundColor: Color = Color(0xFFFAFAFA)
+    backgroundColor: Color = Color(0xFFFDFDFD)
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
-    // Media & Problem Screenshot Picker Launcher with Downscale Safety and Internal Persistence
-    val imagePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            val persistentPath = TaskImageManager.importAndDownscaleImage(context, it)
-            if (persistentPath != null) {
-                viewModel.addImage(filePath = persistentPath)
-            }
+    androidx.compose.runtime.LaunchedEffect(uiState.hapticFeedbackTrigger) {
+        if (uiState.hapticFeedbackTrigger > 0L) {
+            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
         }
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val screenWidthPx = with(density) { maxWidth.toPx() }
+        val screenHeightPx = with(density) { maxHeight.toPx() }
+
+        val imagePickerLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.GetContent()
+        ) { uri: Uri? ->
+            uri?.let {
+                viewModel.importImageFromUri(
+                    context = context.applicationContext,
+                    uri = it,
+                    screenWidth = screenWidthPx,
+                    screenHeight = screenHeightPx
+                )
+            }
+        }
+
         val panX = uiState.panOffsetX
         val panY = uiState.panOffsetY
         val zoom = uiState.zoomScale
+        val isDark = uiState.config.isDarkMode
+        val gridLineColor = if (isDark) Color(0xFF2C3038) else Color(0xFFDCE2EC)
+        val axesColor = if (isDark) Color(0xFF81D4FA) else Color(0xFF1565C0)
+        val effectiveBgColor = if (isDark) Color(0xFF1B1D22) else backgroundColor
 
-        // 1. Hardware-Accelerated Drawing Surface (Infinite Dot Grid + Vector Inking)
+        // 1. Hardware-Accelerated Drawing Surface (Squared Grid + Coordinate Axes + Vector Inking)
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .background(backgroundColor)
+                .background(effectiveBgColor)
                 .pointerInteropFilter { motionEvent ->
                     viewModel.processMotionEvent(motionEvent)
                 }
         ) {
-            // Infinite Grid rendered efficiently for current viewport bounds
-            drawInfiniteDotGrid(
-                panOffsetX = panX,
-                panOffsetY = panY,
-                zoomScale = zoom,
-                baseGridSizePx = with(density) { 36.dp.toPx() }
-            )
+            // Classic Notebook Grid (Тетрадь в клеточку)
+            if (uiState.config.showGrid) {
+                drawInfiniteSquaredGrid(
+                    panOffsetX = panX,
+                    panOffsetY = panY,
+                    zoomScale = zoom,
+                    gridSizePx = with(density) { 36.dp.toPx() },
+                    lineColor = gridLineColor
+                )
+            }
+
+            // Cartesian Coordinate System (X & Y axes with numerical ticks, arrows, and origin)
+            if (uiState.config.showCoordinateAxes) {
+                drawCoordinateAxes(
+                    panOffsetX = panX,
+                    panOffsetY = panY,
+                    zoomScale = zoom,
+                    gridSizePx = with(density) { 36.dp.toPx() },
+                    textMeasurer = textMeasurer,
+                    axesColor = axesColor
+                )
+            }
 
             // Render vector strokes and annotations in transformed scene space
             withTransform({
                 translate(left = panX, top = panY)
                 scale(scaleX = zoom, scaleY = zoom, pivot = Offset.Zero)
             }) {
-                // Render completed strokes with calligraphic ribbon segments
                 val strokes = uiState.strokes
+                val activeStroke = uiState.currentActiveStroke
+
+                // LAYER 1 (Underneath): Render ALL Highlighter strokes
                 for (i in strokes.indices) {
-                    drawStroke(strokes[i])
+                    if (strokes[i].tool == CanvasTool.HIGHLIGHTER) {
+                        drawStroke(strokes[i])
+                    }
+                }
+                if (activeStroke?.tool == CanvasTool.HIGHLIGHTER) {
+                    drawStroke(activeStroke)
                 }
 
-                // Render current active in-progress stroke
-                uiState.currentActiveStroke?.let { activeStroke ->
+                // LAYER 2 (On Top): Render ALL Ballpoint Pen strokes
+                for (i in strokes.indices) {
+                    if (strokes[i].tool == CanvasTool.PEN) {
+                        drawStroke(strokes[i])
+                    }
+                }
+                if (activeStroke?.tool == CanvasTool.PEN) {
                     drawStroke(activeStroke)
                 }
 
@@ -171,14 +216,18 @@ fun InfiniteCanvas(
             )
         }
 
-        // 3. Floating Minimalist Toolbar
         if (showToolbar) {
             CanvasToolbar(
                 uiState = uiState,
                 onToolSelected = viewModel::setTool,
-                onColorSelected = viewModel::setPenColor,
-                onStrokeWidthChanged = viewModel::setPenWidth,
+                onActiveShapeSelected = viewModel::setActiveShape,
+                onColorSelected = viewModel::setColor,
+                onStrokeWidthChanged = viewModel::setStrokeWidth,
                 onTouchModeToggled = viewModel::toggleTouchMode,
+                onToggleRulerMode = viewModel::toggleRulerMode,
+                onToggleGrid = viewModel::toggleGrid,
+                onToggleCoordinateAxes = viewModel::toggleCoordinateAxes,
+                onToggleDarkMode = viewModel::toggleDarkMode,
                 onUndo = viewModel::undo,
                 onRedo = viewModel::redo,
                 onClear = viewModel::clear,
@@ -401,26 +450,25 @@ private fun ResizeCornerHandle(
 }
 
 /**
- * Draws an infinite dot grid aligned with coordinate scene transformations.
- * Only iterates over visible viewport bounding box for $O(1)$ constant-time 144Hz performance.
+ * Draws classic squared notebook grid (тетрадь в клеточку) dynamically scaled with infinite canvas.
+ * Draws lines only within the visible viewport bounds for O(1) 144Hz performance.
  */
-private fun DrawScope.drawInfiniteDotGrid(
+private fun DrawScope.drawInfiniteSquaredGrid(
     panOffsetX: Float,
     panOffsetY: Float,
     zoomScale: Float,
-    baseGridSizePx: Float
+    gridSizePx: Float = 36f,
+    lineColor: Color = Color(0xFFE0E3EA)
 ) {
     val scale = if (zoomScale <= 0f) 1.0f else zoomScale
-    val effectiveGridSize = baseGridSizePx * scale
+    val effectiveGridSize = gridSizePx * scale
 
     val stepMultiplier = when {
-        effectiveGridSize < 16f -> 4
-        effectiveGridSize < 24f -> 2
+        effectiveGridSize < 12f -> 4
+        effectiveGridSize < 20f -> 2
         else -> 1
     }
-    val gridStep = baseGridSizePx * stepMultiplier
-    val dotRadius = (1.5f * scale.coerceIn(0.6f, 1.4f)).coerceIn(1.0f, 3.0f)
-    val dotColor = Color.LightGray.copy(alpha = 0.45f)
+    val gridStep = gridSizePx * stepMultiplier
 
     val sceneLeft = -panOffsetX / scale
     val sceneTop = -panOffsetY / scale
@@ -432,68 +480,225 @@ private fun DrawScope.drawInfiniteDotGrid(
     val startY = floor(sceneTop / gridStep) * gridStep
     val endY = ceil(sceneBottom / gridStep) * gridStep
 
+    // Draw vertical grid lines
     var x = startX
     while (x <= endX) {
         val screenX = x * scale + panOffsetX
-        var y = startY
-        while (y <= endY) {
-            val screenY = y * scale + panOffsetY
-            drawCircle(
-                color = dotColor,
-                radius = dotRadius,
-                center = Offset(screenX, screenY)
-            )
-            y += gridStep
-        }
+        drawLine(
+            color = lineColor,
+            start = Offset(screenX, 0f),
+            end = Offset(screenX, size.height),
+            strokeWidth = 1f
+        )
         x += gridStep
+    }
+
+    // Draw horizontal grid lines
+    var y = startY
+    while (y <= endY) {
+        val screenY = y * scale + panOffsetY
+        drawLine(
+            color = lineColor,
+            start = Offset(0f, screenY),
+            end = Offset(size.width, screenY),
+            strokeWidth = 1f
+        )
+        y += gridStep
     }
 }
 
 /**
- * Renders a vector stroke using calligraphic tapered segmented ribbons with round caps and joins.
+ * Draws a Cartesian Coordinate System (X and Y axes with directional arrows and origin point (0, 0))
+ * aligned with the notebook grid in scene space.
+ */
+private fun DrawScope.drawCoordinateAxes(
+    panOffsetX: Float,
+    panOffsetY: Float,
+    zoomScale: Float,
+    gridSizePx: Float = 36f,
+    textMeasurer: androidx.compose.ui.text.TextMeasurer,
+    axesColor: Color = Color(0xFF1565C0)
+) {
+    val scale = if (zoomScale <= 0f) 1.0f else zoomScale
+    val step = gridSizePx * scale
+
+    // Screen coordinates of axes
+    val screenXAxisY = 0f * scale + panOffsetY // y = 0 line
+    val screenYAxisX = 0f * scale + panOffsetX // x = 0 line
+
+    // Numerical tick marks along X-axis
+    if (screenXAxisY in -60f..(size.height + 60f) && step > 10f) {
+        val startK = kotlin.math.floor((0f - screenYAxisX) / step).toInt() - 1
+        val endK = kotlin.math.ceil((size.width - screenYAxisX) / step).toInt() + 1
+        val tickInterval = if (step < 25f) 5 else if (step < 50f) 2 else 1
+
+        for (k in startK..endK) {
+            if (k == 0) continue
+            if (k % tickInterval != 0) continue
+            val tickX = screenYAxisX + k * step
+            if (tickX in 0f..size.width) {
+                drawLine(
+                    color = axesColor.copy(alpha = 0.6f),
+                    start = Offset(tickX, screenXAxisY - 4f),
+                    end = Offset(tickX, screenXAxisY + 4f),
+                    strokeWidth = 1.5f
+                )
+                if (step >= 25f || k % (tickInterval * 2) == 0) {
+                    drawText(
+                        textMeasurer = textMeasurer,
+                        text = "$k",
+                        topLeft = Offset(tickX - 6f, screenXAxisY + 6f),
+                        style = androidx.compose.ui.text.TextStyle(
+                            color = axesColor,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    )
+                }
+            }
+        }
+
+        // Draw X-axis
+        drawLine(
+            color = axesColor,
+            start = Offset(0f, screenXAxisY),
+            end = Offset(size.width, screenXAxisY),
+            strokeWidth = 2.5f
+        )
+        val arrowSize = 14f
+        drawLine(
+            color = axesColor,
+            start = Offset(size.width - arrowSize, screenXAxisY - arrowSize / 2f),
+            end = Offset(size.width - 2f, screenXAxisY),
+            strokeWidth = 2.5f
+        )
+        drawLine(
+            color = axesColor,
+            start = Offset(size.width - arrowSize, screenXAxisY + arrowSize / 2f),
+            end = Offset(size.width - 2f, screenXAxisY),
+            strokeWidth = 2.5f
+        )
+        drawText(
+            textMeasurer = textMeasurer,
+            text = "x",
+            topLeft = Offset(size.width - 24f, screenXAxisY + 4f),
+            style = androidx.compose.ui.text.TextStyle(
+                color = axesColor,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+        )
+    }
+
+    // Numerical tick marks along Y-axis (positive Y points upwards towards negative sceneY)
+    if (screenYAxisX in -60f..(size.width + 60f) && step > 10f) {
+        val startK = kotlin.math.floor((screenXAxisY - size.height) / step).toInt() - 1
+        val endK = kotlin.math.ceil((screenXAxisY - 0f) / step).toInt() + 1
+        val tickInterval = if (step < 25f) 5 else if (step < 50f) 2 else 1
+
+        for (k in startK..endK) {
+            if (k == 0) continue
+            if (k % tickInterval != 0) continue
+            val tickY = screenXAxisY - k * step
+            if (tickY in 0f..size.height) {
+                drawLine(
+                    color = axesColor.copy(alpha = 0.6f),
+                    start = Offset(screenYAxisX - 4f, tickY),
+                    end = Offset(screenYAxisX + 4f, tickY),
+                    strokeWidth = 1.5f
+                )
+                if (step >= 25f || k % (tickInterval * 2) == 0) {
+                    drawText(
+                        textMeasurer = textMeasurer,
+                        text = "$k",
+                        topLeft = Offset(screenYAxisX + 6f, tickY - 7f),
+                        style = androidx.compose.ui.text.TextStyle(
+                            color = axesColor,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    )
+                }
+            }
+        }
+
+        // Draw Y-axis (positive Y points upwards towards negative sceneY)
+        drawLine(
+            color = axesColor,
+            start = Offset(screenYAxisX, 0f),
+            end = Offset(screenYAxisX, size.height),
+            strokeWidth = 2.5f
+        )
+        val arrowSize = 14f
+        drawLine(
+            color = axesColor,
+            start = Offset(screenYAxisX - arrowSize / 2f, arrowSize),
+            end = Offset(screenYAxisX, 2f),
+            strokeWidth = 2.5f
+        )
+        drawLine(
+            color = axesColor,
+            start = Offset(screenYAxisX + arrowSize / 2f, arrowSize),
+            end = Offset(screenYAxisX, 2f),
+            strokeWidth = 2.5f
+        )
+        drawText(
+            textMeasurer = textMeasurer,
+            text = "y",
+            topLeft = Offset(screenYAxisX + 6f, 4f),
+            style = androidx.compose.ui.text.TextStyle(
+                color = axesColor,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+        )
+    }
+
+    // Origin marker (0, 0)
+    if (screenYAxisX in 0f..size.width && screenXAxisY in 0f..size.height) {
+        drawCircle(
+            color = axesColor,
+            radius = 3.5f,
+            center = Offset(screenYAxisX, screenXAxisY)
+        )
+        drawText(
+            textMeasurer = textMeasurer,
+            text = "(0,0)",
+            topLeft = Offset(screenYAxisX + 5f, screenXAxisY + 3f),
+            style = androidx.compose.ui.text.TextStyle(
+                color = axesColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+        )
+    }
+}
+
+/**
+ * Renders a vector stroke using cached Midpoint Quadratic Bezier path and pre-cached Stroke style.
+ * Completely eliminates per-frame polygon generation, ribbon meshing, and object allocations inside DrawScope.
  */
 private fun DrawScope.drawStroke(stroke: DrawingStroke) {
-    if (stroke.points.isEmpty()) return
+    val points = stroke.points
+    if (points.isEmpty()) return
 
-    val color = stroke.color
-    val alpha = stroke.alpha
-
-    if (stroke.points.size == 1) {
-        val p = stroke.points[0]
+    if (points.size == 1) {
+        val p = points[0]
         drawCircle(
-            color = color,
-            radius = p.width / 2f,
+            color = stroke.color,
+            radius = stroke.strokeWidth / 2f,
             center = Offset(p.x, p.y),
-            alpha = alpha
+            alpha = stroke.alpha
         )
         return
     }
 
-    if (stroke.tool == CanvasTool.HIGHLIGHTER) {
-        drawPath(
-            path = stroke.path,
-            color = color,
-            alpha = alpha,
-            style = stroke.strokeStyle
-        )
-    } else {
-        // True calligraphic segmented ribbon rendering with StrokeCap.Round
-        val points = stroke.points
-        for (i in 1 until points.size) {
-            val p0 = points[i - 1]
-            val p1 = points[i]
-            val segWidth = (p0.width + p1.width) / 2f
-
-            drawLine(
-                color = color,
-                start = Offset(p0.x, p0.y),
-                end = Offset(p1.x, p1.y),
-                strokeWidth = segWidth,
-                cap = StrokeCap.Round,
-                alpha = alpha
-            )
-        }
-    }
+    drawPath(
+        path = stroke.path,
+        color = stroke.color,
+        alpha = stroke.alpha,
+        style = stroke.strokeStyle
+    )
 }
 
 /**

@@ -26,6 +26,10 @@ class CanvasViewModelTest {
     fun initialConfig_isCorrectDefaults() {
         val uiState = viewModel.uiState.value
         assertEquals(CanvasTool.PEN, uiState.config.activeTool)
+        assertEquals(2.0f, uiState.config.penWidth, 0.001f)
+        assertTrue("Notebook grid should be enabled by default", uiState.config.showGrid)
+        assertFalse("Coordinate axes should be disabled by default", uiState.config.showCoordinateAxes)
+        assertFalse("Ruler mode should be disabled by default", uiState.config.rulerModeEnabled)
         assertFalse("Touch mode must be disabled by default for 100% palm rejection", uiState.config.touchModeEnabled)
         assertTrue("Initial stroke list must be empty", uiState.strokes.isEmpty())
         assertTrue("Initial images list must be empty", uiState.images.isEmpty())
@@ -35,6 +39,27 @@ class CanvasViewModelTest {
         assertEquals(0f, uiState.panOffsetX, 0.001f)
         assertEquals(0f, uiState.panOffsetY, 0.001f)
         assertEquals(1.0f, uiState.zoomScale, 0.001f)
+    }
+
+    @Test
+    fun toggles_rulerGridAndAxes_switchCorrectly() {
+        assertFalse(viewModel.uiState.value.config.rulerModeEnabled)
+        viewModel.toggleRulerMode()
+        assertTrue(viewModel.uiState.value.config.rulerModeEnabled)
+        viewModel.toggleRulerMode()
+        assertFalse(viewModel.uiState.value.config.rulerModeEnabled)
+
+        assertTrue(viewModel.uiState.value.config.showGrid)
+        viewModel.toggleGrid()
+        assertFalse(viewModel.uiState.value.config.showGrid)
+        viewModel.toggleGrid()
+        assertTrue(viewModel.uiState.value.config.showGrid)
+
+        assertFalse(viewModel.uiState.value.config.showCoordinateAxes)
+        viewModel.toggleCoordinateAxes()
+        assertTrue(viewModel.uiState.value.config.showCoordinateAxes)
+        viewModel.toggleCoordinateAxes()
+        assertFalse(viewModel.uiState.value.config.showCoordinateAxes)
     }
 
     @Test
@@ -138,6 +163,29 @@ class CanvasViewModelTest {
 
         viewModel.setTool(CanvasTool.ERASER)
         assertEquals(CanvasTool.ERASER, viewModel.uiState.value.config.activeTool)
+    }
+
+    @Test
+    fun shapesAndTheme_updatesCorrectly() {
+        assertEquals(com.augustuz.openmathpad.canvas.model.GeometricShape.NONE, viewModel.uiState.value.config.activeShape)
+        viewModel.setActiveShape(com.augustuz.openmathpad.canvas.model.GeometricShape.LINE)
+        assertEquals(com.augustuz.openmathpad.canvas.model.GeometricShape.LINE, viewModel.uiState.value.config.activeShape)
+
+        assertFalse("Dark mode must be false by default for classic white notebook paper", viewModel.uiState.value.config.isDarkMode)
+        viewModel.toggleDarkMode()
+        assertTrue(viewModel.uiState.value.config.isDarkMode)
+        viewModel.toggleDarkMode()
+        assertFalse(viewModel.uiState.value.config.isDarkMode)
+    }
+
+    @Test
+    fun highlighterControls_updatesCorrectly() {
+        val yellow = Color(0xFFFFEB3B).copy(alpha = 0.45f)
+        viewModel.setHighlighterColor(yellow)
+        assertEquals(yellow, viewModel.uiState.value.config.highlighterColor)
+
+        viewModel.setHighlighterWidth(32.0f)
+        assertEquals(32.0f, viewModel.uiState.value.config.highlighterWidth, 0.01f)
     }
 
     @Test

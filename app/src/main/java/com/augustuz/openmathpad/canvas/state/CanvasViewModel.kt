@@ -1,24 +1,33 @@
 package com.augustuz.openmathpad.canvas.state
 
+import android.content.Context
+import android.net.Uri
 import android.view.MotionEvent
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.augustuz.openmathpad.canvas.media.TaskImageManager
 import com.augustuz.openmathpad.canvas.model.CanvasConfig
 import com.augustuz.openmathpad.canvas.model.CanvasImage
 import com.augustuz.openmathpad.canvas.model.CanvasTextAnnotation
 import com.augustuz.openmathpad.canvas.model.CanvasTool
 import com.augustuz.openmathpad.canvas.model.DrawingStroke
+import com.augustuz.openmathpad.canvas.model.GeometricShape
 import com.augustuz.openmathpad.canvas.model.StrokePoint
 import com.augustuz.openmathpad.canvas.processing.BezierSmoother
+import com.augustuz.openmathpad.canvas.processing.GeometrySnapper
 import com.augustuz.openmathpad.canvas.processing.PalmRejectionFilter
 import com.augustuz.openmathpad.canvas.processing.PressureSmoother
-import com.augustuz.openmathpad.canvas.processing.StrokeBeautifier
 import com.augustuz.openmathpad.canvas.processing.StrokeEraser
 import com.augustuz.openmathpad.canvas.processing.StrokeStabilizer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlin.math.hypot
 import kotlin.math.max
 
@@ -56,6 +65,7 @@ data class CanvasUiState(
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
     val diagnostics: InputDiagnostics = InputDiagnostics(),
+    val hapticFeedbackTrigger: Long = 0L,
 
     // Infinite Canvas Navigation & Transformation State
     val panOffsetX: Float = 0f,
@@ -65,7 +75,7 @@ data class CanvasUiState(
 
 /**
  * ViewModel managing infinite canvas coordinate transformations, stylus vs touch separation,
- * real-time stroke stabilization, calligraphic beautification, and image card interactions.
+ * low-latency WYSIWYG Midpoint Quadratic Bezier inking, and image card interactions.
  */
 class CanvasViewModel : ViewModel() {
 
@@ -81,6 +91,12 @@ class CanvasViewModel : ViewModel() {
     private var currentStrokeId: String? = null
     private var activePointerId: Int? = null
     private var activePointerIsStylus: Boolean = false
+
+    // Geometry Draw & Hold Line Straightening
+    private var holdStraightenJob: Job? = null
+    private var isStrokeStraightened: Boolean = false
+    private var lastMoveScreenX: Float = 0f
+    private var lastMoveScreenY: Float = 0f
 
     // Two-Finger Gesture Navigation Tracking
     private var isGestureNavigating: Boolean = false
@@ -271,6 +287,11 @@ class CanvasViewModel : ViewModel() {
                     pressureSmoother.reset()
                     strokeStabilizer.reset()
                     activePoints.clear()
+                    holdStraightenJob?.cancel()
+                    isStrokeStraightened = false
+                    lastMoveScreenX = event.getX(actionIndex)
+                    lastMoveScreenY = event.getY(actionIndex)
+
                     val strokeId = java.util.UUID.randomUUID().toString()
                     currentStrokeId = strokeId
 
@@ -288,7 +309,7 @@ class CanvasViewModel : ViewModel() {
                         panOffsetX = panX,
                         panOffsetY = panY,
                         zoomScale = zoom,
-                        strokeStabilizer = strokeStabilizer
+                        strokeStabilizer = null
                     )
 
                     if (activeTool == CanvasTool.ERASER) {
@@ -308,7 +329,28 @@ class CanvasViewModel : ViewModel() {
                             )
                         }
                     } else {
-                        activePoints.addAll(extracted)
+                        // Magnetic vertex & grid intersection snapping for start point
+                        val pointsWithStartSnap = if (extracted.isNotEmpty()) {
+                            val p0 = extracted.first()
+                            val (sx, sy) = GeometrySnapper.snapPoint(
+                                x = p0.x,
+                                y = p0.y,
+                                existingStrokes = _uiState.value.strokes,
+                                gridSize = 36f,
+                                isGridEnabled = config.showGrid,
+                                snapThreshold = 24f
+                            )
+                            listOf(p0.copy(x = sx, y = sy)) + extracted.drop(1)
+                        } else extracted
+
+                        activePoints.addAll(pointsWithStartSnap)
+
+                        if (config.rulerModeEnabled) {
+                            isStrokeStraightened = true
+                        } else {
+                            scheduleHoldStraighten()
+                        }
+
                         val newStroke = createStrokeFromPoints(
                             points = activePoints.toList(),
                             tool = activeTool,
@@ -351,6 +393,10 @@ class CanvasViewModel : ViewModel() {
                     pressureSmoother.reset()
                     strokeStabilizer.reset()
                     activePoints.clear()
+                    holdStraightenJob?.cancel()
+                    isStrokeStraightened = false
+                    lastMoveScreenX = event.getX(candidateIndex)
+                    lastMoveScreenY = event.getY(candidateIndex)
                     currentStrokeId = java.util.UUID.randomUUID().toString()
                 }
 
@@ -370,7 +416,7 @@ class CanvasViewModel : ViewModel() {
                         panOffsetX = panX,
                         panOffsetY = panY,
                         zoomScale = zoom,
-                        strokeStabilizer = strokeStabilizer
+                        strokeStabilizer = null
                     )
 
                     if (activeTool == CanvasTool.ERASER) {
@@ -389,24 +435,106 @@ class CanvasViewModel : ViewModel() {
                             )
                         }
                     } else {
-                        activePoints.addAll(extracted)
-                        val updatedStroke = createStrokeFromPoints(
-                            points = activePoints.toList(),
-                            tool = activeTool,
-                            config = config,
-                            id = currentStrokeId ?: java.util.UUID.randomUUID().toString()
-                        )
-                        _uiState.update { state ->
-                            state.copy(
-                                currentActiveStroke = updatedStroke,
-                                diagnostics = state.diagnostics.copy(
-                                    lastToolType = pointerTool,
-                                    toolTypeName = getToolTypeName(pointerTool),
-                                    lastPressure = event.getPressure(activeIndex),
-                                    historicalPointsCount = event.historySize,
-                                    acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
+                        val curScreenX = event.getX(activeIndex)
+                        val curScreenY = event.getY(activeIndex)
+                        val distMoved = hypot(curScreenX - lastMoveScreenX, curScreenY - lastMoveScreenY)
+
+                        if (distMoved > 8f) {
+                            lastMoveScreenX = curScreenX
+                            lastMoveScreenY = curScreenY
+                            if (!isStrokeStraightened && !config.rulerModeEnabled && config.activeShape == GeometricShape.NONE) {
+                                scheduleHoldStraighten()
+                            }
+                        }
+
+                        if (config.activeShape != GeometricShape.NONE) {
+                            // Geometric Shape drawing mode (Line, Vector Arrow, Rectangle, Circle)
+                            if (activePoints.isNotEmpty() && extracted.isNotEmpty()) {
+                                val startPt = activePoints.first()
+                                val currentPt = extracted.last()
+                                val shapePts = generateShapePoints(config.activeShape, startPt, currentPt, config)
+                                val updatedStroke = createStrokeFromPoints(
+                                    points = shapePts,
+                                    tool = activeTool,
+                                    config = config,
+                                    id = currentStrokeId ?: java.util.UUID.randomUUID().toString()
                                 )
+                                _uiState.update { state ->
+                                    state.copy(
+                                        currentActiveStroke = updatedStroke,
+                                        diagnostics = state.diagnostics.copy(
+                                            lastToolType = pointerTool,
+                                            toolTypeName = getToolTypeName(pointerTool),
+                                            lastPressure = event.getPressure(activeIndex),
+                                            historicalPointsCount = event.historySize,
+                                            acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
+                                        )
+                                    )
+                                }
+                            }
+                        } else if (isStrokeStraightened || config.rulerModeEnabled) {
+                            // Straightened mode: draws straight line connecting start and current point with snap
+                            if (activePoints.isNotEmpty() && extracted.isNotEmpty()) {
+                                val startPt = activePoints.first()
+                                val currentPt = extracted.last()
+                                val straightPts = GeometrySnapper.createStraightLinePoints(
+                                    points = listOf(startPt, currentPt),
+                                    existingStrokes = _uiState.value.strokes,
+                                    gridSize = 36f,
+                                    isGridEnabled = config.showGrid,
+                                    snapThreshold = 20f
+                                )
+                                val updatedStroke = createStrokeFromPoints(
+                                    points = straightPts,
+                                    tool = activeTool,
+                                    config = config,
+                                    id = currentStrokeId ?: java.util.UUID.randomUUID().toString()
+                                )
+                                _uiState.update { state ->
+                                    state.copy(
+                                        currentActiveStroke = updatedStroke,
+                                        diagnostics = state.diagnostics.copy(
+                                            lastToolType = pointerTool,
+                                            toolTypeName = getToolTypeName(pointerTool),
+                                            lastPressure = event.getPressure(activeIndex),
+                                            historicalPointsCount = event.historySize,
+                                            acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
+                                        )
+                                    )
+                                }
+                            }
+                        } else {
+                            // Normal Ballpoint Inking: Filter points with >= 3.0px distance to eliminate blobs
+                            for (pt in extracted) {
+                                if (activePoints.isEmpty()) {
+                                    activePoints.add(pt)
+                                } else {
+                                    val lastPt = activePoints.last()
+                                    val distPx = hypot(pt.x - lastPt.x, pt.y - lastPt.y) * zoom
+                                    if (distPx >= 3.0f) {
+                                        activePoints.add(pt)
+                                    }
+                                }
+                            }
+
+                            val updatedStroke = createStrokeFromPoints(
+                                points = activePoints.toList(),
+                                tool = activeTool,
+                                config = config,
+                                id = currentStrokeId ?: java.util.UUID.randomUUID().toString()
                             )
+                            _uiState.update { state ->
+                                state.copy(
+                                    currentActiveStroke = updatedStroke,
+                                    diagnostics = state.diagnostics.copy(
+                                        lastToolType = pointerTool,
+                                        toolTypeName = getToolTypeName(pointerTool),
+                                        lastPressure = event.getPressure(activeIndex),
+                                        historicalPointsCount = event.historySize,
+                                        acceptedEventsCount = state.diagnostics.acceptedEventsCount + 1
+                                    )
+                                )
+                            }
                         }
                     }
                 } else {
@@ -444,22 +572,77 @@ class CanvasViewModel : ViewModel() {
     }
 
     /**
-     * Finalizes current in-progress stroke and applies the full Stroke Beautification pipeline:
-     * - Moving average jitter reduction
-     * - RDP curve simplification
-     * - Chaikin corner-cutting curve smoothing
-     * - Calligraphic pressure and velocity tapering
+     * Generates points for the selected geometric shape mode.
+     */
+    private fun generateShapePoints(
+        shape: GeometricShape,
+        start: StrokePoint,
+        end: StrokePoint,
+        config: CanvasConfig
+    ): List<StrokePoint> {
+        return when (shape) {
+            GeometricShape.LINE -> GeometrySnapper.createStraightLinePoints(
+                points = listOf(start, end),
+                existingStrokes = _uiState.value.strokes,
+                gridSize = 36f,
+                isGridEnabled = config.showGrid,
+                snapThreshold = 20f
+            )
+            GeometricShape.VECTOR_ARROW -> GeometrySnapper.createVectorArrowPoints(
+                start = start,
+                end = end,
+                existingStrokes = _uiState.value.strokes,
+                gridSize = 36f,
+                isGridEnabled = config.showGrid,
+                snapThreshold = 20f
+            )
+            GeometricShape.RECTANGLE -> GeometrySnapper.createRectanglePoints(
+                start = start,
+                end = end,
+                existingStrokes = _uiState.value.strokes,
+                gridSize = 36f,
+                isGridEnabled = config.showGrid,
+                snapThreshold = 20f
+            )
+            GeometricShape.CIRCLE -> GeometrySnapper.createCirclePoints(
+                start = start,
+                end = end,
+                existingStrokes = _uiState.value.strokes,
+                gridSize = 36f,
+                isGridEnabled = config.showGrid,
+                snapThreshold = 20f
+            )
+            GeometricShape.NONE -> listOf(start, end)
+        }
+    }
+
+    /**
+     * Finalizes current in-progress stroke and preserves WYSIWYG fidelity.
+     * If the user held the pen on a straight stroke or ruler mode is active, snaps into a straight line.
      */
     private fun finalizeActiveStroke(config: CanvasConfig) {
+        holdStraightenJob?.cancel()
         val activeStroke = _uiState.value.currentActiveStroke
         if (activeStroke != null && activeStroke.points.isNotEmpty()) {
+            val finalStroke = if (config.activeShape != GeometricShape.NONE) {
+                activeStroke
+            } else if ((isStrokeStraightened || config.rulerModeEnabled) && activeStroke.points.size >= 2) {
+                val straightPts = GeometrySnapper.createStraightLinePoints(
+                    points = listOf(activeStroke.points.first(), activeStroke.points.last()),
+                    existingStrokes = _uiState.value.strokes,
+                    gridSize = 36f,
+                    isGridEnabled = config.showGrid,
+                    snapThreshold = 20f
+                )
+                activeStroke.copy(points = straightPts)
+            } else {
+                activeStroke
+            }
             saveUndoState()
-
-            val beautified = StrokeBeautifier.beautifyStroke(activeStroke)
 
             _uiState.update { state ->
                 state.copy(
-                    strokes = state.strokes + beautified,
+                    strokes = state.strokes + finalStroke,
                     currentActiveStroke = null,
                     canUndo = undoStack.isNotEmpty(),
                     canRedo = redoStack.isNotEmpty()
@@ -470,6 +653,52 @@ class CanvasViewModel : ViewModel() {
         }
         activePoints.clear()
         currentStrokeId = null
+        isStrokeStraightened = false
+    }
+
+    /**
+     * Schedules automatic line straightening if the stylus remains paused for >= 450ms.
+     */
+    private fun scheduleHoldStraighten() {
+        holdStraightenJob?.cancel()
+        holdStraightenJob = viewModelScope.launch {
+            delay(450)
+            straightenActiveStroke()
+        }
+    }
+
+    /**
+     * Straightens the active stroke in real-time when held still, STRICTLY IF straightness >= 0.88.
+     * Curved handwriting and loops will never be straightened accidentally.
+     */
+    private fun straightenActiveStroke() {
+        val config = _uiState.value.config
+        if (config.activeTool == CanvasTool.ERASER || config.activeShape != GeometricShape.NONE) return
+        val currentStroke = _uiState.value.currentActiveStroke ?: return
+        if (activePoints.size >= 2) {
+            val straightness = GeometrySnapper.calculateStraightness(activePoints)
+            if (straightness < 0.88f) {
+                // User was writing letters or drawing curves - do not straighten!
+                return
+            }
+            isStrokeStraightened = true
+            val straightPts = GeometrySnapper.createStraightLinePoints(
+                points = listOf(activePoints.first(), activePoints.last()),
+                existingStrokes = _uiState.value.strokes,
+                gridSize = 36f,
+                isGridEnabled = config.showGrid,
+                snapThreshold = 20f
+            )
+            activePoints.clear()
+            activePoints.addAll(straightPts)
+            val updatedStroke = currentStroke.copy(points = straightPts)
+            _uiState.update { 
+                it.copy(
+                    currentActiveStroke = updatedStroke,
+                    hapticFeedbackTrigger = it.hapticFeedbackTrigger + 1
+                ) 
+            }
+        }
     }
 
     private fun discardActiveStroke() {
@@ -529,27 +758,66 @@ class CanvasViewModel : ViewModel() {
     // --- Interactive Media / Task Image Management ---
 
     /**
-     * Inserts an image card onto the infinite canvas scene.
+     * Safely copies an external image Uri stream in background Dispatchers.IO,
+     * computes center spawn coordinates according to current viewport, and adds it to the canvas.
+     */
+    fun importImageFromUri(
+        context: Context,
+        uri: Uri,
+        screenWidth: Float,
+        screenHeight: Float
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val persistentImage = TaskImageManager.importAndDownscaleImage(context, uri)
+            if (persistentImage != null) {
+                val aspectRatio = max(0.2f, persistentImage.width / max(1f, persistentImage.height))
+                val targetWidth = 360f
+                val targetHeight = targetWidth / aspectRatio
+
+                val currentPanX = _uiState.value.panOffsetX
+                val currentPanY = _uiState.value.panOffsetY
+                val currentZoom = _uiState.value.zoomScale
+
+                val spawnX = (-currentPanX + screenWidth / 2f) / currentZoom - (targetWidth / 2f)
+                val spawnY = (-currentPanY + screenHeight / 2f) / currentZoom - (targetHeight / 2f)
+
+                addImage(
+                    filePath = persistentImage.filePath,
+                    x = spawnX,
+                    y = spawnY,
+                    width = targetWidth,
+                    height = targetHeight,
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight
+                )
+            }
+        }
+    }
+
+    /**
+     * Inserts an image card onto the infinite canvas scene, centered in current visible viewport by default.
      */
     fun addImage(
         filePath: String,
         x: Float? = null,
         y: Float? = null,
         width: Float = 360f,
-        height: Float = 260f
+        height: Float = 260f,
+        screenWidth: Float = 1200f,
+        screenHeight: Float = 800f
     ) {
         saveUndoState()
 
+        val currentPanX = _uiState.value.panOffsetX
+        val currentPanY = _uiState.value.panOffsetY
+        val currentZoom = _uiState.value.zoomScale
+
         val sceneX = x ?: run {
-            val currentPanX = _uiState.value.panOffsetX
-            val currentZoom = _uiState.value.zoomScale
-            (400f - currentPanX) / currentZoom - width / 2f
+            (-currentPanX + screenWidth / 2f) / currentZoom - width / 2f
         }
 
         val sceneY = y ?: run {
-            val currentPanY = _uiState.value.panOffsetY
-            val currentZoom = _uiState.value.zoomScale
-            (400f - currentPanY) / currentZoom - height / 2f
+            (-currentPanY + screenHeight / 2f) / currentZoom - height / 2f
         }
 
         val newImage = CanvasImage(
@@ -642,20 +910,74 @@ class CanvasViewModel : ViewModel() {
     // --- Tool Configuration ---
 
     fun setTool(tool: CanvasTool) {
-        _uiState.update { it.copy(config = it.config.copy(activeTool = tool)) }
+        _uiState.update { it.copy(config = it.config.copy(activeTool = tool, activeShape = GeometricShape.NONE)) }
+    }
+
+    fun setActiveShape(shape: GeometricShape) {
+        _uiState.update { it.copy(config = it.config.copy(activeShape = shape)) }
+    }
+
+    fun toggleDarkMode() {
+        _uiState.update { it.copy(config = it.config.copy(isDarkMode = !it.config.isDarkMode)) }
     }
 
     fun setPenColor(color: Color) {
         _uiState.update { it.copy(config = it.config.copy(penColor = color)) }
     }
 
+    fun setHighlighterColor(color: Color) {
+        _uiState.update { it.copy(config = it.config.copy(highlighterColor = color)) }
+    }
+
+    fun setColor(color: Color) {
+        _uiState.update {
+            if (it.config.activeTool == CanvasTool.HIGHLIGHTER) {
+                it.copy(config = it.config.copy(highlighterColor = color))
+            } else {
+                it.copy(config = it.config.copy(penColor = color))
+            }
+        }
+    }
+
     fun setPenWidth(width: Float) {
         _uiState.update { it.copy(config = it.config.copy(penWidth = width)) }
+    }
+
+    fun setHighlighterWidth(width: Float) {
+        _uiState.update { it.copy(config = it.config.copy(highlighterWidth = width)) }
+    }
+
+    fun setStrokeWidth(width: Float) {
+        _uiState.update {
+            if (it.config.activeTool == CanvasTool.HIGHLIGHTER) {
+                it.copy(config = it.config.copy(highlighterWidth = width))
+            } else {
+                it.copy(config = it.config.copy(penWidth = width))
+            }
+        }
     }
 
     fun toggleTouchMode() {
         _uiState.update {
             it.copy(config = it.config.copy(touchModeEnabled = !it.config.touchModeEnabled))
+        }
+    }
+
+    fun toggleRulerMode() {
+        _uiState.update {
+            it.copy(config = it.config.copy(rulerModeEnabled = !it.config.rulerModeEnabled))
+        }
+    }
+
+    fun toggleGrid() {
+        _uiState.update {
+            it.copy(config = it.config.copy(showGrid = !it.config.showGrid))
+        }
+    }
+
+    fun toggleCoordinateAxes() {
+        _uiState.update {
+            it.copy(config = it.config.copy(showCoordinateAxes = !it.config.showCoordinateAxes))
         }
     }
 
@@ -749,6 +1071,7 @@ class CanvasViewModel : ViewModel() {
 
     override fun onCleared() {
         super.onCleared()
+        holdStraightenJob?.cancel()
         undoStack.clear()
         redoStack.clear()
         activePoints.clear()

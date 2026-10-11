@@ -1,17 +1,33 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
+# Build outputs
+build/
+app/build/
 /build
+/app/build
 /captures
 .externalNativeBuild
 .cxx
+
+# Gradle & local properties
+.gradle
+/local.properties
 local.properties
+
+# IDE & workspace files
+*.iml
+.idea/
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+
+# System & memory dump files
+.DS_Store
+*.hprof
+*.log
+
+# Agent & analysis artifacts
 .agent/
+.agents/
 analysis_reports/

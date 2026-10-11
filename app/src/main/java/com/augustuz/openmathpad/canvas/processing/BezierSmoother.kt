@@ -4,14 +4,19 @@ import android.view.MotionEvent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Path
 import com.augustuz.openmathpad.canvas.model.StrokePoint
+import kotlin.math.hypot
 
 /**
- * MotionEvent historical point extractor and Midpoint Quadratic Bezier path generator.
+ * MotionEvent historical point extractor with minimum distance thresholding
+ * and Midpoint Quadratic Bezier path generator.
  */
 object BezierSmoother {
 
+    private const val MIN_DISTANCE_SCREEN_PX = 3.0f
+
     /**
-     * Extracts all historical and current points from a MotionEvent.
+     * Extracts all historical and current points from a MotionEvent, discarding
+     * micro-movement jitter points closer than [MIN_DISTANCE_SCREEN_PX] to eliminate loops/blobs.
      *
      * @param event Native MotionEvent.
      * @param baseWidth Active base stroke width.
@@ -34,13 +39,24 @@ object BezierSmoother {
         val toolType = if (event.pointerCount > 0) event.getToolType(pIdx) else MotionEvent.TOOL_TYPE_UNKNOWN
         val isStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
         val scale = if (zoomScale <= 0f) 1.0f else zoomScale
+        val minDistanceScene = MIN_DISTANCE_SCREEN_PX / scale
 
-        // 1. Process historical points
+        var lastX = Float.NaN
+        var lastY = Float.NaN
+
+        // 1. Process historical points with distance threshold
         for (h in 0 until historySize) {
             val hX = if (event.pointerCount > 1) event.getHistoricalX(pIdx, h) else event.getHistoricalX(h)
             val hY = if (event.pointerCount > 1) event.getHistoricalY(pIdx, h) else event.getHistoricalY(h)
             val sceneHX = (hX - panOffsetX) / scale
             val sceneHY = (hY - panOffsetY) / scale
+
+            if (!lastX.isNaN() && hypot(sceneHX - lastX, sceneHY - lastY) < minDistanceScene) {
+                continue
+            }
+            lastX = sceneHX
+            lastY = sceneHY
+
             val hPressure = if (event.pointerCount > 1) event.getHistoricalPressure(pIdx, h) else event.getHistoricalPressure(h)
             val hTime = event.getHistoricalEventTime(h)
 
@@ -58,16 +74,19 @@ object BezierSmoother {
         val cY = event.getY(pIdx)
         val sceneCX = (cX - panOffsetX) / scale
         val sceneCY = (cY - panOffsetY) / scale
-        val cPressure = event.getPressure(pIdx)
-        val cTime = event.eventTime
 
-        pressureSmoother.update(cPressure, baseWidth, isStylus)
-        val (stX, stY, stP) = if (strokeStabilizer != null) {
-            strokeStabilizer.filter(sceneCX, sceneCY, pressureSmoother.currentSmoothedPressure)
-        } else {
-            Triple(sceneCX, sceneCY, pressureSmoother.currentSmoothedPressure)
+        if (lastX.isNaN() || hypot(sceneCX - lastX, sceneCY - lastY) >= minDistanceScene) {
+            val cPressure = event.getPressure(pIdx)
+            val cTime = event.eventTime
+
+            pressureSmoother.update(cPressure, baseWidth, isStylus)
+            val (stX, stY, stP) = if (strokeStabilizer != null) {
+                strokeStabilizer.filter(sceneCX, sceneCY, pressureSmoother.currentSmoothedPressure)
+            } else {
+                Triple(sceneCX, sceneCY, pressureSmoother.currentSmoothedPressure)
+            }
+            points.add(StrokePoint(stX, stY, stP, pressureSmoother.currentCalculatedWidth, cTime))
         }
-        points.add(StrokePoint(stX, stY, stP, pressureSmoother.currentCalculatedWidth, cTime))
 
         return points
     }
