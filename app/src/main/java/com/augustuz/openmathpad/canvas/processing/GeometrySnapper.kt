@@ -219,7 +219,8 @@ object GeometrySnapper {
     }
 
     /**
-     * Generates points for a Circle sampled smoothly with [numSamples] points.
+     * Generates points for a Circle with stationary center at [start] and radius to [end].
+     * Preserves strict stationary center (x0, y0) with symmetric expansion.
      */
     fun createCirclePoints(
         start: StrokePoint,
@@ -227,24 +228,13 @@ object GeometrySnapper {
         existingStrokes: List<DrawingStroke>,
         gridSize: Float = 36f,
         isGridEnabled: Boolean = true,
-        snapThreshold: Float = 20f,
-        numSamples: Int = 36
+        snapThreshold: Float = 20f
     ): List<StrokePoint> {
         val (sX, sY) = snapPoint(start.x, start.y, existingStrokes, gridSize, isGridEnabled, snapThreshold)
         val (eX, eY) = snapPoint(end.x, end.y, existingStrokes, gridSize, isGridEnabled, snapThreshold)
-
-        val radius = hypot(eX - sX, eY - sY)
-        val width = start.width
-        val pressure = 0.5f
-        val time = end.timestamp
-
-        val result = ArrayList<StrokePoint>(numSamples + 1)
-        for (i in 0..numSamples) {
-            val theta = (i.toFloat() / numSamples) * (2f * Math.PI.toFloat())
-            val cX = sX + radius * cos(theta)
-            val cY = sY + radius * sin(theta)
-            result.add(StrokePoint(cX, cY, pressure, width, time))
-        }
-        return result
+        return listOf(
+            start.copy(x = sX, y = sY),
+            end.copy(x = eX, y = eY)
+        )
     }
 }

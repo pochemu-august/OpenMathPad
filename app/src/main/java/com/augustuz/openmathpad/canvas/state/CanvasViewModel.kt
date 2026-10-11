@@ -7,12 +7,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.augustuz.openmathpad.canvas.media.TaskImageManager
+import com.augustuz.openmathpad.canvas.model.AdaptiveInkColor
 import com.augustuz.openmathpad.canvas.model.CanvasConfig
 import com.augustuz.openmathpad.canvas.model.CanvasImage
+import com.augustuz.openmathpad.canvas.model.CanvasShape
+import com.augustuz.openmathpad.canvas.model.CanvasShapeType
 import com.augustuz.openmathpad.canvas.model.CanvasTextAnnotation
 import com.augustuz.openmathpad.canvas.model.CanvasTool
 import com.augustuz.openmathpad.canvas.model.DrawingStroke
 import com.augustuz.openmathpad.canvas.model.GeometricShape
+import com.augustuz.openmathpad.canvas.model.ShapeHandle
 import com.augustuz.openmathpad.canvas.model.StrokePoint
 import com.augustuz.openmathpad.canvas.processing.BezierSmoother
 import com.augustuz.openmathpad.canvas.processing.GeometrySnapper
@@ -44,19 +48,23 @@ data class InputDiagnostics(
 )
 
 /**
- * Historical snapshot of drawing surface and media images for undo/redo.
+ * Historical snapshot of drawing surface, shapes, and media images for undo/redo.
  */
 data class CanvasSnapshot(
     val strokes: List<DrawingStroke>,
+    val shapes: List<CanvasShape> = emptyList(),
     val textAnnotations: List<CanvasTextAnnotation> = emptyList(),
     val images: List<CanvasImage> = emptyList()
 )
 
 /**
- * UI State for Infinite Canvas, Calligraphic Inking, and Media Task Insertion.
+ * UI State for Infinite Canvas, Calligraphic Inking, Interactive Shapes, and Media Task Insertion.
  */
 data class CanvasUiState(
     val strokes: List<DrawingStroke> = emptyList(),
+    val shapes: List<CanvasShape> = emptyList(),
+    val selectedShapeId: String? = null,
+    val currentActiveShapePreview: CanvasShape? = null,
     val canvasTextAnnotations: List<CanvasTextAnnotation> = emptyList(),
     val images: List<CanvasImage> = emptyList(),
     val selectedImageId: String? = null,
@@ -127,9 +135,20 @@ class CanvasViewModel : ViewModel() {
     private var imageInitialHeight: Float = 0f
     private var imageMovedOrResized: Boolean = false
 
-    /**
-     * Clamps zoom scale to specified range [MIN_ZOOM, MAX_ZOOM].
-     */
+    // Interactive Shape Gesture Tracking
+    private var activeShapeId: String? = null
+    private var activeShapeHandle: ShapeHandle = ShapeHandle.NONE
+    private var shapeDragStartSceneX: Float = 0f
+    private var shapeDragStartSceneY: Float = 0f
+    private var shapeInitialStartX: Float = 0f
+    private var shapeInitialStartY: Float = 0f
+    private var shapeInitialEndX: Float = 0f
+    private var shapeInitialEndY: Float = 0f
+    private var shapeMovedOrResized: Boolean = false
+
+    // Fast-Stroke Landing Hook Filter State
+    private var landingFilterApplied: Boolean = false
+
     fun clampZoom(scale: Float): Float = scale.coerceIn(MIN_ZOOM, MAX_ZOOM)
 
     /**
@@ -196,15 +215,21 @@ class CanvasViewModel : ViewModel() {
         val sceneX = (event.x - panX) / zoom
         val sceneY = (event.y - panY) / zoom
 
-        // 0. Interactive Task Image Manipulation (Hit-test, Drag, Resize, Delete)
+        // 0. Interactive Media & Geometric Shape Manipulation (Hit-test, Drag, Resize, Delete)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (checkAndStartImageInteraction(event.x, event.y, sceneX, sceneY, zoom, panX, panY)) {
                     return true
                 }
-                // Tapping outside on empty canvas deselects any selected image
+                if (checkAndStartShapeInteraction(event.x, event.y, sceneX, sceneY, zoom, panX, panY)) {
+                    return true
+                }
+                // Tapping outside on empty canvas deselects any selected image or shape
                 if (_uiState.value.selectedImageId != null) {
                     selectImage(null)
+                }
+                if (_uiState.value.selectedShapeId != null) {
+                    selectShape(null)
                 }
             }
             MotionEvent.ACTION_MOVE -> {
@@ -212,10 +237,18 @@ class CanvasViewModel : ViewModel() {
                     handleImageDrag(sceneX, sceneY)
                     return true
                 }
+                if (activeShapeId != null) {
+                    handleShapeDrag(sceneX, sceneY)
+                    return true
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (activeImageId != null) {
                     finishImageInteraction()
+                    return true
+                }
+                if (activeShapeId != null) {
+                    finishShapeInteraction()
                     return true
                 }
             }
@@ -325,6 +358,23 @@ class CanvasViewModel : ViewModel() {
                 val isAllowedTouch = isStylusTouch || (touchMode && activePointerId == null)
 
                 if (isAllowedTouch && (activePointerId == null || (isStylusTouch && !activePointerIsStylus))) {
+                    val screenX = event.getX(actionIndex)
+                    val screenY = event.getY(actionIndex)
+                    val sceneX = (screenX - panX) / zoom
+                    val sceneY = (screenY - panY) / zoom
+
+                    // If not drawing a new shape and not using eraser, check shape hit test / handles
+                    if (config.activeShape == GeometricShape.NONE && config.activeTool != CanvasTool.ERASER) {
+                        if (checkAndStartShapeInteraction(screenX, screenY, sceneX, sceneY, zoom, panX, panY)) {
+                            activePointerId = actionPointerId
+                            activePointerIsStylus = isStylusTouch
+                            activeIndex = actionIndex
+                            return true
+                        } else if (_uiState.value.selectedShapeId != null) {
+                            selectShape(null)
+                        }
+                    }
+
                     activePointerId = actionPointerId
                     activePointerIsStylus = isStylusTouch
                     activeIndex = actionIndex
@@ -449,6 +499,15 @@ class CanvasViewModel : ViewModel() {
                 }
 
                 if (activePointerId != null && activeIndex != -1) {
+                    if (activeShapeId != null) {
+                        val curScreenX = event.getX(activeIndex)
+                        val curScreenY = event.getY(activeIndex)
+                        val curSceneX = (curScreenX - panX) / zoom
+                        val curSceneY = (curScreenY - panY) / zoom
+                        handleShapeDrag(curSceneX, curSceneY)
+                        return true
+                    }
+
                     val pointerTool = event.getToolType(activeIndex)
                     val activeTool = if (PalmRejectionFilter.isHardwareEraser(pointerTool)) {
                         CanvasTool.ERASER
@@ -500,7 +559,27 @@ class CanvasViewModel : ViewModel() {
                             if (activePoints.isNotEmpty() && extracted.isNotEmpty()) {
                                 val startPt = activePoints.first()
                                 val currentPt = extracted.last()
-                                val shapePts = generateShapePoints(config.activeShape, startPt, currentPt, config)
+                                val shapeType = when (config.activeShape) {
+                                    GeometricShape.VECTOR_ARROW -> CanvasShapeType.VECTOR
+                                    GeometricShape.RECTANGLE -> CanvasShapeType.BOX
+                                    GeometricShape.CIRCLE -> CanvasShapeType.CIRCLE
+                                    GeometricShape.LINE -> CanvasShapeType.LINE
+                                    GeometricShape.NONE -> CanvasShapeType.LINE
+                                }
+                                val (snapEndX, snapEndY) = GeometrySnapper.snapPoint(
+                                    currentPt.x, currentPt.y, _uiState.value.strokes, 36f, config.showGrid, 20f
+                                )
+                                val previewShape = CanvasShape(
+                                    id = currentStrokeId ?: java.util.UUID.randomUUID().toString(),
+                                    type = shapeType,
+                                    startX = startPt.x,
+                                    startY = startPt.y,
+                                    endX = snapEndX,
+                                    endY = snapEndY,
+                                    color = config.penColor,
+                                    strokeWidth = config.penWidth
+                                )
+                                val shapePts = generateShapePoints(config.activeShape, startPt, StrokePoint(snapEndX, snapEndY), config)
                                 val updatedStroke = createStrokeFromPoints(
                                     points = shapePts,
                                     tool = activeTool,
@@ -510,6 +589,7 @@ class CanvasViewModel : ViewModel() {
                                 )
                                 _uiState.update { state ->
                                     state.copy(
+                                        currentActiveShapePreview = previewShape,
                                         currentActiveStroke = updatedStroke,
                                         diagnostics = state.diagnostics.copy(
                                             lastToolType = pointerTool,
@@ -554,16 +634,26 @@ class CanvasViewModel : ViewModel() {
                                 }
                             }
                         } else {
-                            // Normal Ballpoint Inking: Filter points with >= 3.0px distance to eliminate blobs
+                            // Normal Ballpoint Inking: Filter points with >= 1.5px distance to eliminate stationary blobs while preserving 240-360Hz precision
                             for (pt in extracted) {
                                 if (activePoints.isEmpty()) {
                                     activePoints.add(pt)
                                 } else {
                                     val lastPt = activePoints.last()
                                     val distPx = hypot(pt.x - lastPt.x, pt.y - lastPt.y) * zoom
-                                    if (distPx >= 3.0f) {
+                                    if (distPx >= 1.5f) {
                                         activePoints.add(pt)
                                     }
+                                }
+                            }
+
+                            // Eliminate fast-stroke landing hook / serif artifact at stroke start
+                            if (!landingFilterApplied && activePoints.size in 3..4) {
+                                val filtered = BezierSmoother.filterLandingJitter(activePoints, maxDistancePx = 18f / zoom)
+                                if (filtered.size != activePoints.size || (filtered.isNotEmpty() && filtered[0] != activePoints[0])) {
+                                    activePoints.clear()
+                                    activePoints.addAll(filtered)
+                                    landingFilterApplied = true
                                 }
                             }
 
@@ -606,14 +696,22 @@ class CanvasViewModel : ViewModel() {
                 val actionIndex = event.actionIndex
                 val liftingPointerId = event.getPointerId(actionIndex)
                 if (liftingPointerId == activePointerId) {
-                    finalizeActiveStroke(config)
+                    if (activeShapeId != null) {
+                        finishShapeInteraction()
+                    } else {
+                        finalizeActiveStroke(config)
+                    }
                     activePointerId = null
                     activePointerIsStylus = false
                 }
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                finalizeActiveStroke(config)
+                if (activeShapeId != null) {
+                    finishShapeInteraction()
+                } else {
+                    finalizeActiveStroke(config)
+                }
                 activePointerId = null
                 activePointerIsStylus = false
             }
@@ -713,6 +811,21 @@ class CanvasViewModel : ViewModel() {
             }
 
             val finalStroke = if (config.activeShape != GeometricShape.NONE) {
+                val preview = _uiState.value.currentActiveShapePreview
+                if (preview != null && (preview.width > 3f || preview.height > 3f || preview.radius > 3f)) {
+                    saveUndoState()
+                    _uiState.update { state ->
+                        state.copy(
+                            shapes = state.shapes + preview,
+                            currentActiveShapePreview = null,
+                            currentActiveStroke = null,
+                            canUndo = undoStack.isNotEmpty(),
+                            canRedo = redoStack.isNotEmpty()
+                        )
+                    }
+                    discardActiveStroke()
+                    return
+                }
                 activeStroke.copy(shape = config.activeShape)
             } else if ((isStrokeStraightened || config.rulerModeEnabled) && activeStroke.points.size >= 2) {
                 val straightPts = GeometrySnapper.createStraightLinePoints(
@@ -790,13 +903,18 @@ class CanvasViewModel : ViewModel() {
         currentStrokeId = null
         activePointerId = null
         activePointerIsStylus = false
-        _uiState.update { it.copy(currentActiveStroke = null) }
+        landingFilterApplied = false
+        activeShapeId = null
+        activeShapeHandle = ShapeHandle.NONE
+        _uiState.update { it.copy(currentActiveStroke = null, currentActiveShapePreview = null) }
     }
 
     private fun eraseAtPoints(points: List<StrokePoint>, eraserRadius: Float) {
         val currentStrokes = _uiState.value.strokes
+        val currentShapes = _uiState.value.shapes
         var modified = false
         var remainingStrokes = currentStrokes
+        var remainingShapes = currentShapes
 
         for (p in points) {
             val erased = StrokeEraser.findStrokesIntersecting(remainingStrokes, p.x, p.y, eraserRadius)
@@ -805,10 +923,23 @@ class CanvasViewModel : ViewModel() {
                 remainingStrokes = remainingStrokes.filterNot { it.id in erasedIds }
                 modified = true
             }
+
+            val erasedShapes = remainingShapes.filter { it.hitTest(p.x, p.y, eraserRadius) }
+            if (erasedShapes.isNotEmpty()) {
+                val erasedShapeIds = erasedShapes.map { it.id }.toSet()
+                remainingShapes = remainingShapes.filterNot { it.id in erasedShapeIds }
+                modified = true
+            }
         }
 
         if (modified) {
-            _uiState.update { it.copy(strokes = remainingStrokes) }
+            _uiState.update { state ->
+                state.copy(
+                    strokes = remainingStrokes,
+                    shapes = remainingShapes,
+                    selectedShapeId = if (state.selectedShapeId != null && remainingShapes.none { it.id == state.selectedShapeId }) null else state.selectedShapeId
+                )
+            }
         }
     }
 
@@ -970,6 +1101,28 @@ class CanvasViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Permanently commits an image card's final position and size to canvas state,
+     * saving an undo snapshot to persist transformations and prevent snapping back.
+     */
+    fun updateTaskImage(image: CanvasImage) {
+        saveUndoState()
+        val clampedWidth = max(64f, image.width)
+        val clampedHeight = max(64f, image.height)
+        _uiState.update { state ->
+            val updated = state.images.map { img ->
+                if (img.id == image.id) {
+                    image.copy(width = clampedWidth, height = clampedHeight)
+                } else img
+            }
+            state.copy(
+                images = updated,
+                canUndo = undoStack.isNotEmpty(),
+                canRedo = redoStack.isNotEmpty()
+            )
+        }
+    }
+
     private fun checkAndStartImageInteraction(
         screenX: Float,
         screenY: Float,
@@ -1115,7 +1268,17 @@ class CanvasViewModel : ViewModel() {
 
     private fun finishImageInteraction() {
         if (imageMovedOrResized) {
-            saveUndoState()
+            val targetId = activeImageId
+            if (targetId != null) {
+                val img = _uiState.value.images.find { it.id == targetId }
+                if (img != null) {
+                    updateTaskImage(img)
+                } else {
+                    saveUndoState()
+                }
+            } else {
+                saveUndoState()
+            }
         }
         activeImageId = null
         activeImageHandle = ImageDragHandle.NONE
@@ -1149,6 +1312,264 @@ class CanvasViewModel : ViewModel() {
         }
     }
 
+    // --- Interactive Geometric Shape Management ---
+
+    private fun checkAndStartShapeInteraction(
+        screenX: Float,
+        screenY: Float,
+        sceneX: Float,
+        sceneY: Float,
+        zoom: Float,
+        panX: Float,
+        panY: Float
+    ): Boolean {
+        val selectedId = _uiState.value.selectedShapeId
+        val shapes = _uiState.value.shapes
+        val selectedShape = shapes.find { it.id == selectedId }
+
+        if (selectedShape != null) {
+            val handleHitRadius = 38f
+
+            // 1. Check Delete button (anchored at top-right of shape bounding box)
+            val deleteScreenX = selectedShape.maxX * zoom + panX + 16f
+            val deleteScreenY = selectedShape.minY * zoom + panY - 16f
+            if (hypot(screenX - deleteScreenX, screenY - deleteScreenY) <= handleHitRadius) {
+                removeShape(selectedShape.id)
+                activeShapeId = null
+                activeShapeHandle = ShapeHandle.NONE
+                return true
+            }
+
+            // 2. Check handles
+            val handle = when (selectedShape.type) {
+                CanvasShapeType.VECTOR, CanvasShapeType.LINE -> {
+                    val startScreenX = selectedShape.startX * zoom + panX
+                    val startScreenY = selectedShape.startY * zoom + panY
+                    val endScreenX = selectedShape.endX * zoom + panX
+                    val endScreenY = selectedShape.endY * zoom + panY
+
+                    when {
+                        hypot(screenX - startScreenX, screenY - startScreenY) <= handleHitRadius -> ShapeHandle.START_ENDPOINT
+                        hypot(screenX - endScreenX, screenY - endScreenY) <= handleHitRadius -> ShapeHandle.END_ENDPOINT
+                        else -> ShapeHandle.NONE
+                    }
+                }
+                CanvasShapeType.BOX, CanvasShapeType.CIRCLE -> {
+                    val cornerTL_X = selectedShape.minX * zoom + panX
+                    val cornerTL_Y = selectedShape.minY * zoom + panY
+                    val cornerTR_X = selectedShape.maxX * zoom + panX
+                    val cornerTR_Y = selectedShape.minY * zoom + panY
+                    val cornerBL_X = selectedShape.minX * zoom + panX
+                    val cornerBL_Y = selectedShape.maxY * zoom + panY
+                    val cornerBR_X = selectedShape.maxX * zoom + panX
+                    val cornerBR_Y = selectedShape.maxY * zoom + panY
+
+                    when {
+                        hypot(screenX - cornerTL_X, screenY - cornerTL_Y) <= handleHitRadius -> ShapeHandle.TOP_LEFT
+                        hypot(screenX - cornerTR_X, screenY - cornerTR_Y) <= handleHitRadius -> ShapeHandle.TOP_RIGHT
+                        hypot(screenX - cornerBL_X, screenY - cornerBL_Y) <= handleHitRadius -> ShapeHandle.BOTTOM_LEFT
+                        hypot(screenX - cornerBR_X, screenY - cornerBR_Y) <= handleHitRadius -> ShapeHandle.BOTTOM_RIGHT
+                        else -> ShapeHandle.NONE
+                    }
+                }
+            }
+
+            if (handle != ShapeHandle.NONE) {
+                activeShapeId = selectedShape.id
+                activeShapeHandle = handle
+                shapeDragStartSceneX = sceneX
+                shapeDragStartSceneY = sceneY
+                shapeInitialStartX = selectedShape.startX
+                shapeInitialStartY = selectedShape.startY
+                shapeInitialEndX = selectedShape.endX
+                shapeInitialEndY = selectedShape.endY
+                shapeMovedOrResized = false
+                return true
+            }
+
+            // 3. Check inside selected shape body
+            if (selectedShape.hitTest(sceneX, sceneY, tolerance = 24f / zoom)) {
+                activeShapeId = selectedShape.id
+                activeShapeHandle = ShapeHandle.BODY
+                shapeDragStartSceneX = sceneX
+                shapeDragStartSceneY = sceneY
+                shapeInitialStartX = selectedShape.startX
+                shapeInitialStartY = selectedShape.startY
+                shapeInitialEndX = selectedShape.endX
+                shapeInitialEndY = selectedShape.endY
+                shapeMovedOrResized = false
+                return true
+            }
+        }
+
+        // 4. Check other shapes for selection
+        for (i in shapes.indices.reversed()) {
+            val sh = shapes[i]
+            if (sh.id == selectedId) continue
+            if (sh.hitTest(sceneX, sceneY, tolerance = 24f / zoom)) {
+                selectShape(sh.id)
+                activeShapeId = sh.id
+                activeShapeHandle = ShapeHandle.BODY
+                shapeDragStartSceneX = sceneX
+                shapeDragStartSceneY = sceneY
+                shapeInitialStartX = sh.startX
+                shapeInitialStartY = sh.startY
+                shapeInitialEndX = sh.endX
+                shapeInitialEndY = sh.endY
+                shapeMovedOrResized = false
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun handleShapeDrag(sceneX: Float, sceneY: Float) {
+        val targetId = activeShapeId ?: return
+        val deltaX = sceneX - shapeDragStartSceneX
+        val deltaY = sceneY - shapeDragStartSceneY
+        shapeMovedOrResized = true
+
+        val shape = _uiState.value.shapes.find { it.id == targetId } ?: return
+
+        when (activeShapeHandle) {
+            ShapeHandle.BODY -> {
+                updateShapeGeometry(
+                    targetId,
+                    shapeInitialStartX + deltaX,
+                    shapeInitialStartY + deltaY,
+                    shapeInitialEndX + deltaX,
+                    shapeInitialEndY + deltaY
+                )
+            }
+            ShapeHandle.START_ENDPOINT -> {
+                updateShapeGeometry(
+                    targetId,
+                    shapeInitialStartX + deltaX,
+                    shapeInitialStartY + deltaY,
+                    shapeInitialEndX,
+                    shapeInitialEndY
+                )
+            }
+            ShapeHandle.END_ENDPOINT -> {
+                updateShapeGeometry(
+                    targetId,
+                    shapeInitialStartX,
+                    shapeInitialStartY,
+                    shapeInitialEndX + deltaX,
+                    shapeInitialEndY + deltaY
+                )
+            }
+            ShapeHandle.BOTTOM_RIGHT -> {
+                if (shape.type == CanvasShapeType.CIRCLE) {
+                    val initialRadius = hypot(shapeInitialEndX - shapeInitialStartX, shapeInitialEndY - shapeInitialStartY)
+                    val newRadius = max(10f, initialRadius + (deltaX + deltaY) / 2f)
+                    updateShapeGeometry(targetId, shapeInitialStartX, shapeInitialStartY, shapeInitialStartX + newRadius, shapeInitialStartY)
+                } else {
+                    updateShapeGeometry(targetId, shapeInitialStartX, shapeInitialStartY, shapeInitialEndX + deltaX, shapeInitialEndY + deltaY)
+                }
+            }
+            ShapeHandle.TOP_LEFT -> {
+                if (shape.type == CanvasShapeType.CIRCLE) {
+                    val initialRadius = hypot(shapeInitialEndX - shapeInitialStartX, shapeInitialEndY - shapeInitialStartY)
+                    val newRadius = max(10f, initialRadius - (deltaX + deltaY) / 2f)
+                    updateShapeGeometry(targetId, shapeInitialStartX, shapeInitialStartY, shapeInitialStartX + newRadius, shapeInitialStartY)
+                } else {
+                    updateShapeGeometry(targetId, shapeInitialStartX + deltaX, shapeInitialStartY + deltaY, shapeInitialEndX, shapeInitialEndY)
+                }
+            }
+            ShapeHandle.TOP_RIGHT -> {
+                if (shape.type == CanvasShapeType.CIRCLE) {
+                    val initialRadius = hypot(shapeInitialEndX - shapeInitialStartX, shapeInitialEndY - shapeInitialStartY)
+                    val newRadius = max(10f, initialRadius + (deltaX - deltaY) / 2f)
+                    updateShapeGeometry(targetId, shapeInitialStartX, shapeInitialStartY, shapeInitialStartX + newRadius, shapeInitialStartY)
+                } else {
+                    updateShapeGeometry(targetId, shapeInitialStartX, shapeInitialStartY + deltaY, shapeInitialEndX + deltaX, shapeInitialEndY)
+                }
+            }
+            ShapeHandle.BOTTOM_LEFT -> {
+                if (shape.type == CanvasShapeType.CIRCLE) {
+                    val initialRadius = hypot(shapeInitialEndX - shapeInitialStartX, shapeInitialEndY - shapeInitialStartY)
+                    val newRadius = max(10f, initialRadius - (deltaX - deltaY) / 2f)
+                    updateShapeGeometry(targetId, shapeInitialStartX, shapeInitialStartY, shapeInitialStartX + newRadius, shapeInitialStartY)
+                } else {
+                    updateShapeGeometry(targetId, shapeInitialStartX + deltaX, shapeInitialStartY, shapeInitialEndX, shapeInitialEndY + deltaY)
+                }
+            }
+            ShapeHandle.NONE -> {}
+        }
+    }
+
+    private fun finishShapeInteraction() {
+        if (shapeMovedOrResized) {
+            val targetId = activeShapeId
+            if (targetId != null) {
+                val sh = _uiState.value.shapes.find { it.id == targetId }
+                if (sh != null) {
+                    commitShape(sh)
+                } else {
+                    saveUndoState()
+                }
+            } else {
+                saveUndoState()
+            }
+        }
+        activeShapeId = null
+        activeShapeHandle = ShapeHandle.NONE
+        shapeMovedOrResized = false
+    }
+
+    fun selectShape(id: String?) {
+        _uiState.update { state ->
+            val updated = state.shapes.map { it.copy(isSelected = (it.id == id)) }
+            state.copy(shapes = updated, selectedShapeId = id)
+        }
+    }
+
+    fun updateShapeGeometry(id: String, startX: Float, startY: Float, endX: Float, endY: Float) {
+        _uiState.update { state ->
+            val updated = state.shapes.map { sh ->
+                if (sh.id == id) sh.copy(startX = startX, startY = startY, endX = endX, endY = endY) else sh
+            }
+            state.copy(shapes = updated)
+        }
+    }
+
+    fun commitShape(shape: CanvasShape) {
+        saveUndoState()
+        _uiState.update { state ->
+            val updated = state.shapes.map { sh ->
+                if (sh.id == shape.id) shape else sh
+            }
+            state.copy(shapes = updated, canUndo = undoStack.isNotEmpty(), canRedo = redoStack.isNotEmpty())
+        }
+    }
+
+    fun removeShape(id: String) {
+        saveUndoState()
+        _uiState.update { state ->
+            state.copy(
+                shapes = state.shapes.filterNot { it.id == id },
+                selectedShapeId = if (state.selectedShapeId == id) null else state.selectedShapeId,
+                canUndo = undoStack.isNotEmpty(),
+                canRedo = redoStack.isNotEmpty()
+            )
+        }
+    }
+
+    fun addShape(shape: CanvasShape) {
+        saveUndoState()
+        _uiState.update { state ->
+            val updated = state.shapes.map { it.copy(isSelected = false) } + shape.copy(isSelected = true)
+            state.copy(
+                shapes = updated,
+                selectedShapeId = shape.id,
+                canUndo = undoStack.isNotEmpty(),
+                canRedo = redoStack.isNotEmpty()
+            )
+        }
+    }
+
     // --- Tool Configuration ---
 
     fun setTool(tool: CanvasTool) {
@@ -1164,9 +1585,9 @@ class CanvasViewModel : ViewModel() {
             val newDarkMode = !state.config.isDarkMode
             val currentPenColor = state.config.penColor
             val newPenColor = if (newDarkMode) {
-                if (currentPenColor == Color(0xFF111827) || currentPenColor == Color(0xFF1A1A1A)) Color(0xFFFFFFFF) else currentPenColor
+                if (AdaptiveInkColor.isDefaultInk(currentPenColor)) AdaptiveInkColor.DarkDefault else AdaptiveInkColor.resolve(currentPenColor, true)
             } else {
-                if (currentPenColor == Color(0xFFFFFFFF)) Color(0xFF111827) else currentPenColor
+                if (AdaptiveInkColor.isDefaultInk(currentPenColor)) AdaptiveInkColor.LightDefault else AdaptiveInkColor.resolve(currentPenColor, false)
             }
             state.copy(config = state.config.copy(isDarkMode = newDarkMode, penColor = newPenColor))
         }
@@ -1237,6 +1658,7 @@ class CanvasViewModel : ViewModel() {
     fun saveUndoState() {
         val snapshot = CanvasSnapshot(
             strokes = _uiState.value.strokes,
+            shapes = _uiState.value.shapes,
             textAnnotations = _uiState.value.canvasTextAnnotations,
             images = _uiState.value.images
         )
@@ -1253,6 +1675,7 @@ class CanvasViewModel : ViewModel() {
 
         val currentSnapshot = CanvasSnapshot(
             strokes = _uiState.value.strokes,
+            shapes = _uiState.value.shapes,
             textAnnotations = _uiState.value.canvasTextAnnotations,
             images = _uiState.value.images
         )
@@ -1262,9 +1685,11 @@ class CanvasViewModel : ViewModel() {
         _uiState.update { state ->
             state.copy(
                 strokes = previousSnapshot.strokes,
+                shapes = previousSnapshot.shapes,
                 canvasTextAnnotations = previousSnapshot.textAnnotations,
                 images = previousSnapshot.images,
                 selectedImageId = null,
+                selectedShapeId = null,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty()
             )
@@ -1276,6 +1701,7 @@ class CanvasViewModel : ViewModel() {
 
         val currentSnapshot = CanvasSnapshot(
             strokes = _uiState.value.strokes,
+            shapes = _uiState.value.shapes,
             textAnnotations = _uiState.value.canvasTextAnnotations,
             images = _uiState.value.images
         )
@@ -1285,9 +1711,11 @@ class CanvasViewModel : ViewModel() {
         _uiState.update { state ->
             state.copy(
                 strokes = nextSnapshot.strokes,
+                shapes = nextSnapshot.shapes,
                 canvasTextAnnotations = nextSnapshot.textAnnotations,
                 images = nextSnapshot.images,
                 selectedImageId = null,
+                selectedShapeId = null,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty()
             )
@@ -1299,10 +1727,13 @@ class CanvasViewModel : ViewModel() {
         _uiState.update { state ->
             state.copy(
                 strokes = emptyList(),
+                shapes = emptyList(),
                 canvasTextAnnotations = emptyList(),
                 images = emptyList(),
                 selectedImageId = null,
+                selectedShapeId = null,
                 currentActiveStroke = null,
+                currentActiveShapePreview = null,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty()
             )

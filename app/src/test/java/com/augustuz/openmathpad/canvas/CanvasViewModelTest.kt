@@ -26,7 +26,7 @@ class CanvasViewModelTest {
     fun initialConfig_isCorrectDefaults() {
         val uiState = viewModel.uiState.value
         assertEquals(CanvasTool.PEN, uiState.config.activeTool)
-        assertEquals(2.0f, uiState.config.penWidth, 0.001f)
+        assertEquals(1.5f, uiState.config.penWidth, 0.001f)
         assertTrue("Notebook grid should be enabled by default", uiState.config.showGrid)
         assertFalse("Coordinate axes should be disabled by default", uiState.config.showCoordinateAxes)
         assertFalse("Ruler mode should be disabled by default", uiState.config.rulerModeEnabled)
@@ -236,18 +236,18 @@ class CanvasViewModelTest {
 
     @Test
     fun gitpodTheme_togglingDarkMode_switchesDefaultInkColors() {
-        // Default light mode has Gitpod Pitch Black #111827 ink
-        assertEquals(Color(0xFF111827), viewModel.uiState.value.config.penColor)
+        // Default light mode has Deep Charcoal #0F172A ink
+        assertEquals(com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.LightDefault, viewModel.uiState.value.config.penColor)
 
-        // Toggling to dark mode should auto-switch default ink to Crisp White #FFFFFF
+        // Toggling to dark mode should auto-switch default ink to Crisp Chalk White #F8FAFC
         viewModel.toggleDarkMode()
         assertTrue(viewModel.uiState.value.config.isDarkMode)
-        assertEquals(Color(0xFFFFFFFF), viewModel.uiState.value.config.penColor)
+        assertEquals(com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.DarkDefault, viewModel.uiState.value.config.penColor)
 
-        // Toggling back to light mode should restore Pitch Black #111827
+        // Toggling back to light mode should restore Deep Charcoal #0F172A
         viewModel.toggleDarkMode()
         assertFalse(viewModel.uiState.value.config.isDarkMode)
-        assertEquals(Color(0xFF111827), viewModel.uiState.value.config.penColor)
+        assertEquals(com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.LightDefault, viewModel.uiState.value.config.penColor)
     }
 
     @Test
@@ -297,5 +297,156 @@ class CanvasViewModelTest {
         )
         assertNotNull(vectorStroke.path)
         assertEquals(com.augustuz.openmathpad.canvas.model.GeometricShape.VECTOR_ARROW, vectorStroke.shape)
+    }
+
+    @Test
+    fun mediaInsertion_updateTaskImage_commitsGeometryAndSavesUndo() {
+        val testPath = "/cache/tasks/test_image_persist.jpg"
+        viewModel.addImage(filePath = testPath, x = 10f, y = 20f, width = 100f, height = 100f)
+        val image = viewModel.uiState.value.images.first()
+
+        val updated = image.copy(x = 150f, y = 220f, width = 300f, height = 250f)
+        viewModel.updateTaskImage(updated)
+
+        val persisted = viewModel.uiState.value.images.first()
+        assertEquals(150f, persisted.x, 0.001f)
+        assertEquals(220f, persisted.y, 0.001f)
+        assertEquals(300f, persisted.width, 0.001f)
+        assertEquals(250f, persisted.height, 0.001f)
+        assertTrue(viewModel.uiState.value.canUndo)
+
+        // Undo restores previous position
+        viewModel.undo()
+        val restored = viewModel.uiState.value.images.first()
+        assertEquals(10f, restored.x, 0.001f)
+        assertEquals(20f, restored.y, 0.001f)
+        assertEquals(100f, restored.width, 0.001f)
+        assertEquals(100f, restored.height, 0.001f)
+    }
+
+    @Test
+    fun geometricShapes_circle_createsStationaryCenterAnalyticShape() {
+        val circlePoints = listOf(
+            StrokePoint(100f, 100f),
+            StrokePoint(150f, 100f)
+        )
+        val circleStroke = DrawingStroke(
+            points = circlePoints,
+            shape = com.augustuz.openmathpad.canvas.model.GeometricShape.CIRCLE
+        )
+        assertNotNull(circleStroke.path)
+        assertEquals(com.augustuz.openmathpad.canvas.model.GeometricShape.CIRCLE, circleStroke.shape)
+    }
+
+    @Test
+    fun interactiveShapes_addSelectUpdateAndUndoRedo() {
+        val testShape = com.augustuz.openmathpad.canvas.model.CanvasShape(
+            id = "shape_1",
+            type = com.augustuz.openmathpad.canvas.model.CanvasShapeType.VECTOR,
+            startX = 10f,
+            startY = 20f,
+            endX = 110f,
+            endY = 120f
+        )
+        viewModel.addShape(testShape)
+
+        val stateAfterAdd = viewModel.uiState.value
+        assertEquals(1, stateAfterAdd.shapes.size)
+        assertEquals("shape_1", stateAfterAdd.selectedShapeId)
+        assertTrue(stateAfterAdd.canUndo)
+
+        // Select and update geometry
+        viewModel.updateShapeGeometry("shape_1", 20f, 30f, 120f, 130f)
+        val updated = viewModel.uiState.value.shapes.first()
+        assertEquals(20f, updated.startX, 0.001f)
+        assertEquals(30f, updated.startY, 0.001f)
+        assertEquals(120f, updated.endX, 0.001f)
+        assertEquals(130f, updated.endY, 0.001f)
+
+        // Commit shape with undo point
+        viewModel.commitShape(updated)
+
+        // Deselect
+        viewModel.selectShape(null)
+        assertNull(viewModel.uiState.value.selectedShapeId)
+
+        // Select
+        viewModel.selectShape("shape_1")
+        assertEquals("shape_1", viewModel.uiState.value.selectedShapeId)
+
+        // Remove shape
+        viewModel.removeShape("shape_1")
+        assertTrue(viewModel.uiState.value.shapes.isEmpty())
+        assertNull(viewModel.uiState.value.selectedShapeId)
+
+        // Undo restores shape
+        viewModel.undo()
+        assertEquals(1, viewModel.uiState.value.shapes.size)
+
+        // Redo removes shape again
+        viewModel.redo()
+        assertTrue(viewModel.uiState.value.shapes.isEmpty())
+    }
+
+    @Test
+    fun strokeBounds_precomputesCachedBoundingBoxForCulling() {
+        val stroke = DrawingStroke(
+            points = listOf(
+                StrokePoint(50f, 50f),
+                StrokePoint(150f, 150f)
+            ),
+            baseWidth = 4f
+        )
+        val bounds = stroke.bounds
+        assertTrue(bounds.left <= 50f)
+        assertTrue(bounds.top <= 50f)
+        assertTrue(bounds.right >= 150f)
+        assertTrue(bounds.bottom >= 150f)
+
+        // Viewport intersection testing
+        val visibleViewport = androidx.compose.ui.geometry.Rect(0f, 0f, 200f, 200f)
+        val offscreenViewport = androidx.compose.ui.geometry.Rect(500f, 500f, 800f, 800f)
+        assertTrue(bounds.overlaps(visibleViewport))
+        assertFalse(bounds.overlaps(offscreenViewport))
+    }
+
+    @Test
+    fun fastStrokeLandingFilter_eliminatesJitterHook() {
+        // Fast vertical downward stroke with initial backward hook:
+        // p0 = (100, 100), p1 = (96, 95) [hook up-left], p2 = (100, 125), p3 = (100, 160)
+        val rawPoints = listOf(
+            StrokePoint(100f, 100f),
+            StrokePoint(96f, 95f),
+            StrokePoint(100f, 125f),
+            StrokePoint(100f, 160f)
+        )
+        val filtered = com.augustuz.openmathpad.canvas.processing.BezierSmoother.filterLandingJitter(
+            rawPoints,
+            maxDistancePx = 18f
+        )
+
+        // Jitter hook point (96, 95) must be discarded
+        assertEquals(3, filtered.size)
+        // Dominant vector is downward, so origin aligns cleanly
+        assertTrue("Origin y should align with stroke trajectory", filtered.first().y <= 125f)
+        assertFalse("Hook point must be removed", filtered.any { it.x == 96f && it.y == 95f })
+    }
+
+    @Test
+    fun adaptiveInkColor_resolvesCorrectLuminance() {
+        val defaultInk = com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.Default
+        assertTrue(com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.isDefaultInk(defaultInk))
+
+        val resolvedLight = com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.resolve(defaultInk, isDark = false)
+        val resolvedDark = com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.resolve(defaultInk, isDark = true)
+        assertEquals(com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.LightDefault, resolvedLight)
+        assertEquals(com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.DarkDefault, resolvedDark)
+
+        // Custom colors retain hue across modes
+        val customColor = Color(0xFF1D4ED8)
+        val customResolvedLight = com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.resolve(customColor, isDark = false)
+        val customResolvedDark = com.augustuz.openmathpad.canvas.model.AdaptiveInkColor.resolve(customColor, isDark = true)
+        assertEquals(customColor, customResolvedLight)
+        assertNotNull(customResolvedDark)
     }
 }

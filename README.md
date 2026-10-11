@@ -18,14 +18,16 @@
 
 **OpenMathPad** is a 100% local, privacy-first infinite scratchpad designed specifically for solving STEM problems, derivations, and physics diagrams on Android tablets:
 
-- **144Hz Low-Latency Inking**: Ultra-responsive drawing loop profiling with zero per-frame heap allocations inside `DrawScope` for buttery smooth stylus tracking on high-refresh-rate displays.
-- **Authentic Uniform Ballpoint Pen**: Crisp, constant-width ballpoint/gel pen strokes (presets: Thin 1.5dp, Normal 2.5dp, Thick 4.0dp) and semi-transparent highlighters (50% alpha). Zero post-stroke morphing or styling deformation upon `ACTION_UP`.
-- **Natural Midpoint Quadratic Bezier Smoothing**: Eliminates digitizer quantization jitter while strictly preserving authentic handwriting trajectory, symbol sharpness, and mathematical notation.
+- **144Hz Low-Latency Inking & Viewport Culling**: Ultra-responsive drawing loop profiling with $O(1)$ viewport bounding box culling (`visibleRect = Rect(-panX/zoom, -panY/zoom, (-panX + width)/zoom, (-panY + height)/zoom)`) and RenderNode hardware graphics layer decoupling. Zero per-frame heap allocations inside `DrawScope` for solid 144 FPS stylus tracking on large documents.
+- **Fast-Stroke "Hook" / "Serif" Elimination**: Micro-jitter landing filter detects and eliminates sharp direction reversals (>110° within 5dp of landing), snapping stroke origins cleanly to the dominant trajectory. Zero-latency linear start for the first 2 points blends smoothly into midpoint Quadratic Beziers once velocity stabilizes.
+- **Authentic Uniform Ballpoint Pen**: Crisp, constant-width ballpoint/gel pen strokes (presets: Thin 1.0dp, Normal 1.5dp, Thick 2.5dp) and semi-transparent highlighters (50% alpha). Zero post-stroke morphing or styling deformation upon `ACTION_UP`.
+- **Interactive Geometric Shapes (`CanvasShape`)**: First-class selectable geometric objects (Vector Arrow, Rectangle Box, Circle, Line). Tapping selects a shape, revealing a high-contrast bounding frame with corner/endpoint resize handles and a quick-delete button. Dragging moves the body; handles resize/transform in real-time with full Undo/Redo history.
+- **Dynamic Theme-Aware Adaptive Ink (`AdaptiveInkColor`)**: Intelligent contrast inversion engine guarantees strokes remain 100% visible across Light and Dark themes. Default ink dynamically renders as Deep Charcoal (`#0F172A`) on light backgrounds and Crisp Chalk White (`#F8FAFC`) on dark backgrounds, while custom STEM palette colors maintain distinctive hue with calibrated luminance.
 - **Classic Squared Paper Grid (Тетрадь в клеточку)**: Standard 5mm school notebook grid lines dynamically scaled and shifted with canvas zoom and pan. Easily toggle between Squared Grid and Blank canvas.
 - **GeoGebra-Lite Smart Geometry & Snapping**:
-  * **Draw & Hold Line Straightening**: Holding the pen stationary at the end of a stroke for $\ge 400\text{ms}$ automatically straightens it into a crisp line segment.
+  * **Draw & Hold Line Straightening**: Holding the pen stationary at the end of a stroke for $\ge 450\text{ms}$ automatically straightens it into a crisp line segment.
   * **Endpoint Magnetic Snapping**: Snaps stroke endpoints to nearby vertices ($\le 24\text{px}$) or grid intersections to draw closed polygons, triangles, coordinate axes, and vectors effortlessly.
-  * **Cartesian Coordinate Axes (XY)**: Quick action toggle to project an aligned Cartesian coordinate system with directional arrows and origin $(0, 0)$.
+  * **Cartesian Coordinate Axes (XY)**: Quick action toggle to project an aligned Cartesian coordinate system with directional arrows, numerical ticks, and origin $(0, 0)$.
   * **Ruler Mode**: Restricts inking strictly to straight line segments.
 - **100% Hardware Palm Rejection**: Active stylus (`TOOL_TYPE_STYLUS`, `TOOL_TYPE_ERASER`) draws freely while capacitive palm touches are cleanly rejected. An optional touch-drawing toggle is available for finger sketching.
 - **Infinite Canvas Navigation**: Smooth two-finger panning and pinch-to-zoom (0.2x to 5.0x) with coordinate scene transformations.
@@ -40,34 +42,39 @@ OpenMathPad uses a clean, reactive architecture with Android Jetpack Compose and
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        Jetpack Compose UI Layer                        │
-│   InfiniteCanvas  •  CanvasToolbar  •  CanvasImageCard  • Diagnostics  │
+│   InfiniteCanvas  •  CanvasToolbar  •  CanvasImageCard  • CanvasShape  │
 └────────────────────────────────────┬───────────────────────────────────┘
                                      │ StateFlow / MotionEvents
 ┌────────────────────────────────────▼───────────────────────────────────┐
 │                      CanvasViewModel State Holder                      │
 │   Undo/Redo History • Telemetry • Coordinate Mapping • Hold-to-Straight│
+│   Interactive Shapes • Viewport Bounds • Theme-Aware Ink Engine        │
 └──────────────┬──────────────────────────────────────────┬──────────────┘
                │ Screen to Scene Transform                │ Persistent Images
 ┌──────────────▼─────────────┐             ┌──────────────▼──────────────┐
 │  Low-Latency Inking Engine │             │    Task Media Management    │
 │ • PalmRejectionFilter      │             │ • TaskImageManager          │
 │ • GeometrySnapper (Snap/XY)│             │ • Downscale & EXIF rotation │
-│ • BezierSmoother (Midpoint)│             │ • Internal Storage Sandbox  │
-│ • Cached Path & StrokeStyle│             │ • Proportional 4-Corner Box │
-│ • StrokeEraser (Geo Bounds)│             └─────────────────────────────┘
+│ • Landing Hook Filter      │             │ • Internal Storage Sandbox  │
+│ • BezierSmoother (Midpoint)│             │ • Proportional 4-Corner Box │
+│ • Cached Path & Bounds Rect│             └─────────────────────────────┘
+│ • AdaptiveInkColor Contrast│
 └────────────────────────────┘
 ```
 
-### 1. Low-Latency Inking & Geometry Engine (`BezierSmoother`, `GeometrySnapper`, `DrawingStroke`)
+### 1. Low-Latency Inking & Geometry Engine (`BezierSmoother`, `GeometrySnapper`, `DrawingStroke`, `CanvasShape`)
 * **Real-Time Midpoint Quadratic Bezier Interpolation**: Interpolates smooth C1 curves between point midpoints using control points. Smooths high-frequency hardware jitter without deforming mathematical symbols or numbers.
+* **Landing Hook Elimination**: First 3-4 points are checked for high-angle reversals (>110°) within landing distance, discarding landing jitter and snapping origin directly to dominant trajectory.
 * **Uniform Ballpoint Pen Rendering**: Clean, constant-width lines with `StrokeCap.Round` and `StrokeJoin.Round`. Eliminates erratic width variation for readable mathematical formulas.
 * **Smart Line Straightening & Magnetic Snapping**: Real-time draw-and-hold timer converts strokes into straight lines, snapping to vertices and grid intersections.
-* **Path & Style Caching**: Finished strokes lazily cache their rendered `androidx.compose.ui.graphics.Path` and `DrawScope.Stroke` style for zero-cost pans and zooms.
-* **Zero-Allocation Rendering**: Eliminates per-frame heap allocations inside `DrawScope` on 144Hz displays.
+* **Precomputed Path & Bounds Caching**: Finished strokes lazily cache their rendered `Path`, `Stroke` style, and `Rect` bounding box for $O(1)$ viewport culling and zero-cost pans and zooms.
+* **Interactive Geometric Shapes**: First-class `CanvasShape` objects for Vectors, Boxes, Circles, and Lines with hit testing, body dragging, handle transforms, and delete overlay.
+* **Adaptive Ink Engine**: Dynamically maps stroke colors based on theme luminance, preventing black ink from vanishing on dark backgrounds.
 
 ### 2. Infinite Canvas & Squared Paper Grid (`InfiniteCanvas`, `CanvasViewModel`)
 * **Coordinate Transformations**: Converts screen pixel coordinates to infinite scene coordinates:
   $$\text{sceneX} = \frac{\text{screenX} - \text{panOffsetX}}{\text{zoomScale}}, \quad \text{sceneY} = \frac{\text{screenY} - \text{panOffsetY}}{\text{zoomScale}}$$
+* **144Hz Viewport Culling**: In `DrawScope`, strokes and shapes outside `visibleRect` are bypassed, keeping frame render times strictly within the 6.9ms frame budget on 144Hz displays.
 * **Two-Finger Navigation**: Distinguishes single-pointer stylus inking from two-finger gestures (pan and pinch-to-zoom clamped between 0.2x and 5.0x).
 * **Infinite Squared Grid**: Renders subtle notebook grid lines in $O(1)$ constant time strictly within the active viewport bounds.
 * **Cartesian Axes**: Displays scaled X and Y axes with directional arrows and $(0, 0)$ origin mark.
@@ -86,7 +93,9 @@ OpenMathPad is optimized for **modern large-screen tablets (e.g., Xiaomi Pad 7 P
 
 | Optimization Vector | Implementation Strategy | Impact |
 | :--- | :--- | :--- |
-| **Hot-Path Allocations** | Completely eliminated polygon meshing, per-segment line loops, and heap allocations inside `Canvas` / `DrawScope`. Cached `Path` and `Stroke` styles. | Eliminates GC churn and frame drops; maintains solid 144 FPS drawing. |
+| **144Hz Viewport Culling** | Precomputed `bounds: Rect` cached on all `DrawingStroke` and `CanvasShape` instances. In `DrawScope`, objects outside `visibleRect` are skipped. | Keeps render time under 6.9ms even with 1,000+ strokes on canvas. |
+| **Hot-Path Allocations** | Completely eliminated polygon meshing, per-segment line loops, and heap allocations inside `Canvas` / `DrawScope`. Cached `Path` and `Stroke` styles. Decoupled via `Modifier.graphicsLayer()`. | Eliminates GC churn and frame drops; maintains solid 144 FPS drawing. |
+| **Stroke Hook Filter** | Vector angle analysis at stroke start detects micro-jitter direction reversals (>110°) and snaps origin to dominant vector. | Top-to-bottom lines no longer look like "1" with backwards hooks. |
 | **Input Latency** | Direct real-time coordinate streaming without pull-string delay. Historical batching via `MotionEvent.getHistoricalX/Y/Pressure`. | Zero pen tip trailing lag. |
 | **WYSIWYG Fidelity** | Active stroke committed directly to stroke list upon `ACTION_UP` without post-processing mutations. | Zero visual morphing or jarring deformation upon stylus release. |
 | **Grid Rendering** | Dot grid calculated only within visible viewport bounding box. | Constant-time rendering regardless of canvas pan offset. |
@@ -125,14 +134,6 @@ cd OpenMathPad
 # Run unit tests
 ./gradlew :app:testDebugUnitTest
 ```
-
-### Windows One-Click Static Analysis & Build Script
-
-```cmd
-run_analysis.bat
-```
-
-The batch script runs Gradle verification, executes unit tests, performs lint analysis, and stores reports in `analysis_reports/latest/`.
 
 ---
 

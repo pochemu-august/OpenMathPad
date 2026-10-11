@@ -3,6 +3,7 @@ package com.augustuz.openmathpad.canvas.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,36 +66,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.augustuz.openmathpad.canvas.model.AdaptiveInkColor
 import com.augustuz.openmathpad.canvas.model.CanvasTool
 import com.augustuz.openmathpad.canvas.model.GeometricShape
 import com.augustuz.openmathpad.canvas.state.CanvasUiState
 import kotlin.math.roundToInt
 
-// Gitpod Modern Developer Palette
-val PresetPenColorsLight = listOf(
-    Color(0xFF111827), // Gitpod Pitch Black (Default)
-    Color(0xFF1D4ED8), // Deep Royal Blue
-    Color(0xFFC62828), // Crimson Red
-    Color(0xFF059669), // Emerald Green
-    Color(0xFF7C3AED), // Vibrant Violet
-    Color(0xFFFF8800)  // Gitpod Orange
-)
-
-val PresetPenColorsDark = listOf(
-    Color(0xFFFFFFFF), // Crisp White (Default in Dark Mode)
-    Color(0xFF38BDF8), // Vibrant Cyan
-    Color(0xFFFFAE33), // Gitpod Orange
-    Color(0xFF4ADE80), // Pastel Mint Green
-    Color(0xFFF472B6), // Pastel Rose Pink
-    Color(0xFFA78BFA)  // Pastel Lavender
-)
-
+// Adaptive Ink Color Palettes
+val PresetPenColorsLight = AdaptiveInkColor.PresetPenColorsLight
+val PresetPenColorsDark = AdaptiveInkColor.PresetPenColorsDark
 val PresetPenColors = PresetPenColorsLight
 
 val PresetPenWidths = listOf(
-    1.5f to "Thin 1.5",
-    2.5f to "Normal 2.5",
-    4.0f to "Thick 4.0"
+    1.0f to "Thin 1.0",
+    1.5f to "Normal 1.5",
+    2.5f to "Thick 2.5"
 )
 
 // Semi-Transparent Highlighter Palette (45% alpha)
@@ -137,9 +123,12 @@ fun CanvasToolbar(
     onResetZoom: () -> Unit = {}
 ) {
     val isDark = uiState.config.isDarkMode
-    val primaryAccent = if (isDark) Color(0xFFFFAE33) else Color(0xFF1D4ED8)
-    val chipSelectedContainer = if (isDark) Color(0xFF2E333D) else Color(0xFFEFF6FF)
-    val chipSelectedContent = if (isDark) Color(0xFFFFAE33) else Color(0xFF1D4ED8)
+    val primaryAccent = if (isDark) Color(0xFFF97316) else Color(0xFF2563EB)
+    val inactiveChipBg = if (isDark) Color(0xFF1E222B) else Color(0xFFFFFFFF)
+    val inactiveChipContent = if (isDark) Color(0xFFF1F5F9) else Color(0xFF0F172A)
+    val inactiveChipBorder = if (isDark) Color(0xFF334155) else Color(0xFFCBD5E1)
+    val activeChipBg = primaryAccent
+    val activeChipContent = Color.White
 
     Card(
         modifier = modifier,
@@ -150,7 +139,7 @@ fun CanvasToolbar(
         ),
         border = CardDefaults.outlinedCardBorder().copy(
             brush = androidx.compose.ui.graphics.SolidColor(
-                if (isDark) Color(0xFF2E333D) else Color(0xFFE2E8F0)
+                if (isDark) Color(0xFF334155) else Color(0xFFCBD5E1)
             )
         )
     ) {
@@ -167,8 +156,9 @@ fun CanvasToolbar(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // 1. Pen Tool (Ballpoint Pen)
+                val isPenSelected = uiState.config.activeTool == CanvasTool.PEN && uiState.config.activeShape == GeometricShape.NONE
                 FilterChip(
-                    selected = uiState.config.activeTool == CanvasTool.PEN && uiState.config.activeShape == GeometricShape.NONE,
+                    selected = isPenSelected,
                     onClick = {
                         onToolSelected(CanvasTool.PEN)
                         onActiveShapeSelected(GeometricShape.NONE)
@@ -181,15 +171,28 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = chipSelectedContainer,
-                        selectedLabelColor = chipSelectedContent,
-                        selectedLeadingIconColor = chipSelectedContent
+                        containerColor = inactiveChipBg,
+                        labelColor = inactiveChipContent,
+                        iconColor = inactiveChipContent,
+                        selectedContainerColor = activeChipBg,
+                        selectedLabelColor = activeChipContent,
+                        selectedLeadingIconColor = activeChipContent
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isPenSelected,
+                        borderColor = inactiveChipBorder,
+                        selectedBorderColor = activeChipBg,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
 
                 // 2. Highlighter Tool (Layered Under Ink)
+                val isHighlighterSelected = uiState.config.activeTool == CanvasTool.HIGHLIGHTER
+                val highlighterActiveBg = if (isDark) Color(0xFFD97706) else Color(0xFFF59E0B)
                 FilterChip(
-                    selected = uiState.config.activeTool == CanvasTool.HIGHLIGHTER,
+                    selected = isHighlighterSelected,
                     onClick = {
                         onToolSelected(CanvasTool.HIGHLIGHTER)
                         onActiveShapeSelected(GeometricShape.NONE)
@@ -202,15 +205,28 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = if (isDark) Color(0xFF332B1A) else Color(0xFFFEF3C7),
-                        selectedLabelColor = if (isDark) Color(0xFFFBBF24) else Color(0xFFB45309),
-                        selectedLeadingIconColor = if (isDark) Color(0xFFFBBF24) else Color(0xFFB45309)
+                        containerColor = inactiveChipBg,
+                        labelColor = inactiveChipContent,
+                        iconColor = inactiveChipContent,
+                        selectedContainerColor = highlighterActiveBg,
+                        selectedLabelColor = Color.White,
+                        selectedLeadingIconColor = Color.White
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isHighlighterSelected,
+                        borderColor = inactiveChipBorder,
+                        selectedBorderColor = highlighterActiveBg,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
 
                 // 3. Eraser Tool
+                val isEraserSelected = uiState.config.activeTool == CanvasTool.ERASER
+                val eraserActiveBg = Color(0xFFDC2626)
                 FilterChip(
-                    selected = uiState.config.activeTool == CanvasTool.ERASER,
+                    selected = isEraserSelected,
                     onClick = {
                         onToolSelected(CanvasTool.ERASER)
                         onActiveShapeSelected(GeometricShape.NONE)
@@ -223,9 +239,20 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = if (isDark) Color(0xFF3B1D24) else Color(0xFFFEE2E2),
-                        selectedLabelColor = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626),
-                        selectedLeadingIconColor = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626)
+                        containerColor = inactiveChipBg,
+                        labelColor = inactiveChipContent,
+                        iconColor = inactiveChipContent,
+                        selectedContainerColor = eraserActiveBg,
+                        selectedLabelColor = Color.White,
+                        selectedLeadingIconColor = Color.White
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isEraserSelected,
+                        borderColor = inactiveChipBorder,
+                        selectedBorderColor = eraserActiveBg,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
 
@@ -233,12 +260,13 @@ fun CanvasToolbar(
                     modifier = Modifier
                         .height(24.dp)
                         .padding(horizontal = 2.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant
+                    color = inactiveChipBorder
                 )
 
                 // 4. Geometric Shapes (GeoGebra Tools)
+                val isLineSelected = uiState.config.activeShape == GeometricShape.LINE
                 FilterChip(
-                    selected = uiState.config.activeShape == GeometricShape.LINE,
+                    selected = isLineSelected,
                     onClick = {
                         val next = if (uiState.config.activeShape == GeometricShape.LINE) GeometricShape.NONE else GeometricShape.LINE
                         onActiveShapeSelected(next)
@@ -251,14 +279,26 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = chipSelectedContainer,
-                        selectedLabelColor = chipSelectedContent,
-                        selectedLeadingIconColor = chipSelectedContent
+                        containerColor = inactiveChipBg,
+                        labelColor = inactiveChipContent,
+                        iconColor = inactiveChipContent,
+                        selectedContainerColor = activeChipBg,
+                        selectedLabelColor = activeChipContent,
+                        selectedLeadingIconColor = activeChipContent
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isLineSelected,
+                        borderColor = inactiveChipBorder,
+                        selectedBorderColor = activeChipBg,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
 
+                val isVectorSelected = uiState.config.activeShape == GeometricShape.VECTOR_ARROW
                 FilterChip(
-                    selected = uiState.config.activeShape == GeometricShape.VECTOR_ARROW,
+                    selected = isVectorSelected,
                     onClick = {
                         val next = if (uiState.config.activeShape == GeometricShape.VECTOR_ARROW) GeometricShape.NONE else GeometricShape.VECTOR_ARROW
                         onActiveShapeSelected(next)
@@ -271,14 +311,26 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = chipSelectedContainer,
-                        selectedLabelColor = chipSelectedContent,
-                        selectedLeadingIconColor = chipSelectedContent
+                        containerColor = inactiveChipBg,
+                        labelColor = inactiveChipContent,
+                        iconColor = inactiveChipContent,
+                        selectedContainerColor = activeChipBg,
+                        selectedLabelColor = activeChipContent,
+                        selectedLeadingIconColor = activeChipContent
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isVectorSelected,
+                        borderColor = inactiveChipBorder,
+                        selectedBorderColor = activeChipBg,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
 
+                val isBoxSelected = uiState.config.activeShape == GeometricShape.RECTANGLE
                 FilterChip(
-                    selected = uiState.config.activeShape == GeometricShape.RECTANGLE,
+                    selected = isBoxSelected,
                     onClick = {
                         val next = if (uiState.config.activeShape == GeometricShape.RECTANGLE) GeometricShape.NONE else GeometricShape.RECTANGLE
                         onActiveShapeSelected(next)
@@ -291,14 +343,26 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = chipSelectedContainer,
-                        selectedLabelColor = chipSelectedContent,
-                        selectedLeadingIconColor = chipSelectedContent
+                        containerColor = inactiveChipBg,
+                        labelColor = inactiveChipContent,
+                        iconColor = inactiveChipContent,
+                        selectedContainerColor = activeChipBg,
+                        selectedLabelColor = activeChipContent,
+                        selectedLeadingIconColor = activeChipContent
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isBoxSelected,
+                        borderColor = inactiveChipBorder,
+                        selectedBorderColor = activeChipBg,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
 
+                val isCircleSelected = uiState.config.activeShape == GeometricShape.CIRCLE
                 FilterChip(
-                    selected = uiState.config.activeShape == GeometricShape.CIRCLE,
+                    selected = isCircleSelected,
                     onClick = {
                         val next = if (uiState.config.activeShape == GeometricShape.CIRCLE) GeometricShape.NONE else GeometricShape.CIRCLE
                         onActiveShapeSelected(next)
@@ -311,9 +375,20 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = chipSelectedContainer,
-                        selectedLabelColor = chipSelectedContent,
-                        selectedLeadingIconColor = chipSelectedContent
+                        containerColor = inactiveChipBg,
+                        labelColor = inactiveChipContent,
+                        iconColor = inactiveChipContent,
+                        selectedContainerColor = activeChipBg,
+                        selectedLabelColor = activeChipContent,
+                        selectedLeadingIconColor = activeChipContent
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isCircleSelected,
+                        borderColor = inactiveChipBorder,
+                        selectedBorderColor = activeChipBg,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
 
@@ -321,12 +396,13 @@ fun CanvasToolbar(
                     modifier = Modifier
                         .height(24.dp)
                         .padding(horizontal = 2.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant
+                    color = inactiveChipBorder
                 )
 
                 // 5. Classic Notebook Grid Toggle (Squared / Blank)
+                val isGridSelected = uiState.config.showGrid
                 FilterChip(
-                    selected = uiState.config.showGrid,
+                    selected = isGridSelected,
                     onClick = onToggleGrid,
                     label = { Text(if (uiState.config.showGrid) "Grid" else "Blank") },
                     leadingIcon = {
@@ -336,15 +412,27 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = chipSelectedContainer,
-                        selectedLabelColor = chipSelectedContent,
-                        selectedLeadingIconColor = chipSelectedContent
+                        containerColor = inactiveChipBg,
+                        labelColor = inactiveChipContent,
+                        iconColor = inactiveChipContent,
+                        selectedContainerColor = activeChipBg,
+                        selectedLabelColor = activeChipContent,
+                        selectedLeadingIconColor = activeChipContent
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isGridSelected,
+                        borderColor = inactiveChipBorder,
+                        selectedBorderColor = activeChipBg,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
 
                 // 6. Cartesian Coordinate Axes Toggle (XY)
+                val isAxesSelected = uiState.config.showCoordinateAxes
                 FilterChip(
-                    selected = uiState.config.showCoordinateAxes,
+                    selected = isAxesSelected,
                     onClick = onToggleCoordinateAxes,
                     label = { Text("XY Axes") },
                     leadingIcon = {
@@ -354,9 +442,20 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = chipSelectedContainer,
-                        selectedLabelColor = chipSelectedContent,
-                        selectedLeadingIconColor = chipSelectedContent
+                        containerColor = inactiveChipBg,
+                        labelColor = inactiveChipContent,
+                        iconColor = inactiveChipContent,
+                        selectedContainerColor = activeChipBg,
+                        selectedLabelColor = activeChipContent,
+                        selectedLeadingIconColor = activeChipContent
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isAxesSelected,
+                        borderColor = inactiveChipBorder,
+                        selectedBorderColor = activeChipBg,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
 
@@ -365,7 +464,7 @@ fun CanvasToolbar(
                     Icon(
                         imageVector = if (isDark) Icons.Default.LightMode else Icons.Default.DarkMode,
                         contentDescription = "Toggle Dark/Light Mode",
-                        tint = if (isDark) Color(0xFFFFD54F) else MaterialTheme.colorScheme.onSurface
+                        tint = if (isDark) Color(0xFFFFD54F) else Color(0xFF0F172A)
                     )
                 }
 
@@ -373,7 +472,7 @@ fun CanvasToolbar(
                     modifier = Modifier
                         .height(24.dp)
                         .padding(horizontal = 2.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant
+                    color = inactiveChipBorder
                 )
 
                 // 8. Add Task / Image Insertion Button
@@ -382,7 +481,7 @@ fun CanvasToolbar(
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = primaryAccent,
-                        contentColor = if (isDark) Color(0xFF121417) else Color.White
+                        contentColor = Color.White
                     )
                 ) {
                     Icon(
@@ -403,20 +502,24 @@ fun CanvasToolbar(
                 OutlinedButton(
                     onClick = onResetZoom,
                     shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, inactiveChipBorder),
                     colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = primaryAccent
+                        containerColor = inactiveChipBg,
+                        contentColor = inactiveChipContent
                     )
                 ) {
                     Icon(
                         imageVector = Icons.Default.RestartAlt,
                         contentDescription = "Reset Zoom to 100%",
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(16.dp),
+                        tint = inactiveChipContent
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = "$zoomPct%",
                         fontWeight = FontWeight.Medium,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
+                        color = inactiveChipContent
                     )
                 }
 
@@ -424,21 +527,23 @@ fun CanvasToolbar(
                     modifier = Modifier
                         .height(24.dp)
                         .padding(horizontal = 2.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant
+                    color = inactiveChipBorder
                 )
 
                 // 10. Undo / Redo / Clear
                 IconButton(onClick = onUndo, enabled = uiState.canUndo) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = "Undo"
+                        contentDescription = "Undo",
+                        tint = if (uiState.canUndo) inactiveChipContent else if (isDark) Color(0xFF475569) else Color(0xFF94A3B8)
                     )
                 }
 
                 IconButton(onClick = onRedo, enabled = uiState.canRedo) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Redo,
-                        contentDescription = "Redo"
+                        contentDescription = "Redo",
+                        tint = if (uiState.canRedo) inactiveChipContent else if (isDark) Color(0xFF475569) else Color(0xFF94A3B8)
                     )
                 }
 
@@ -456,7 +561,7 @@ fun CanvasToolbar(
                         tint = if (hasContent) {
                             MaterialTheme.colorScheme.error
                         } else {
-                            MaterialTheme.colorScheme.outline
+                            if (isDark) Color(0xFF475569) else Color(0xFF94A3B8)
                         }
                     )
                 }
@@ -501,7 +606,7 @@ fun CanvasToolbar(
                                         } else {
                                             Modifier.border(
                                                 width = 1.dp,
-                                                color = if (isDark) Color(0xFF383C45) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                                color = if (isDark) Color(0xFF383C45) else Color(0xFFCBD5E1),
                                                 shape = CircleShape
                                             )
                                         }
@@ -530,7 +635,11 @@ fun CanvasToolbar(
                             val isSelected = currentWidth == width
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                                color = if (isSelected) activeChipBg else inactiveChipBg,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) activeChipBg else inactiveChipBorder
+                                ),
                                 modifier = Modifier
                                     .clickable { onStrokeWidthChanged(width) }
                             ) {
@@ -538,7 +647,7 @@ fun CanvasToolbar(
                                     text = label,
                                     fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                    color = if (isSelected) Color.White else inactiveChipContent,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
@@ -551,7 +660,7 @@ fun CanvasToolbar(
                         modifier = Modifier
                             .height(24.dp)
                             .padding(horizontal = 2.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant
+                        color = inactiveChipBorder
                     )
                 }
 
@@ -559,10 +668,14 @@ fun CanvasToolbar(
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = if (uiState.config.touchModeEnabled) {
-                        MaterialTheme.colorScheme.secondaryContainer
+                        if (isDark) Color(0xFF1E293B) else Color(0xFFEFF6FF)
                     } else {
-                        MaterialTheme.colorScheme.surfaceContainer
+                        inactiveChipBg
                     },
+                    border = BorderStroke(
+                        1.dp,
+                        if (uiState.config.touchModeEnabled) activeChipBg else inactiveChipBorder
+                    ),
                     modifier = Modifier.clickable { onTouchModeToggled() }
                 ) {
                     Row(
@@ -573,11 +686,7 @@ fun CanvasToolbar(
                         Icon(
                             imageVector = if (uiState.config.touchModeEnabled) Icons.Default.TouchApp else Icons.Default.DoNotDisturb,
                             contentDescription = "Touch Mode Toggle",
-                            tint = if (uiState.config.touchModeEnabled) {
-                                MaterialTheme.colorScheme.onSecondaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            },
+                            tint = if (uiState.config.touchModeEnabled) activeChipBg else inactiveChipContent,
                             modifier = Modifier.size(18.dp)
                         )
 
@@ -585,19 +694,17 @@ fun CanvasToolbar(
                             text = if (uiState.config.touchModeEnabled) "Touch On" else "Stylus Only (Palm Reject)",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
-                            color = if (uiState.config.touchModeEnabled) {
-                                MaterialTheme.colorScheme.onSecondaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            }
+                            color = if (uiState.config.touchModeEnabled) activeChipBg else inactiveChipContent
                         )
 
                         Switch(
                             checked = uiState.config.touchModeEnabled,
                             onCheckedChange = { onTouchModeToggled() },
                             colors = SwitchDefaults.colors(
-                                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                                checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = activeChipBg,
+                                uncheckedThumbColor = inactiveChipContent,
+                                uncheckedTrackColor = inactiveChipBorder
                             )
                         )
                     }

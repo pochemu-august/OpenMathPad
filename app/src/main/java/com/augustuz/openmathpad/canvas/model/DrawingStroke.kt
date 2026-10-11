@@ -24,12 +24,54 @@ import kotlin.math.hypot
 data class DrawingStroke(
     val id: String = UUID.randomUUID().toString(),
     val points: List<StrokePoint>,
-    val color: Color = Color.Black,
-    val baseWidth: Float = 2.0f,
+    val color: Color = AdaptiveInkColor.Default,
+    val baseWidth: Float = 1.5f,
     val tool: CanvasTool = CanvasTool.PEN,
     val shape: GeometricShape = GeometricShape.NONE,
     val alpha: Float = if (tool == CanvasTool.HIGHLIGHTER) 0.5f else 1.0f
 ) {
+    /**
+     * Resolves stroke color dynamically based on theme (Light vs Dark mode).
+     */
+    fun getEffectiveColor(isDark: Boolean): Color {
+        return if (tool == CanvasTool.HIGHLIGHTER) {
+            color
+        } else {
+            AdaptiveInkColor.resolve(color, isDark)
+        }
+    }
+
+    /**
+     * Pre-computed Compose Rect bounding box in scene coordinates for O(1) viewport culling.
+     */
+    val bounds: Rect by lazy {
+        if (points.isEmpty()) return@lazy Rect.Zero
+        val padding = strokeWidth * 2f
+        if (shape == GeometricShape.CIRCLE && points.size >= 2) {
+            val center = points[0]
+            val edge = points[1]
+            val radius = hypot(edge.x - center.x, edge.y - center.y)
+            return@lazy Rect(
+                center.x - radius - padding,
+                center.y - radius - padding,
+                center.x + radius + padding,
+                center.y + radius + padding
+            )
+        }
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        for (i in points.indices) {
+            val p = points[i]
+            if (p.x < minX) minX = p.x
+            if (p.y < minY) minY = p.y
+            if (p.x > maxX) maxX = p.x
+            if (p.y > maxY) maxY = p.y
+        }
+        Rect(minX - padding, minY - padding, maxX + padding, maxY + padding)
+    }
+
     /**
      * Lazily calculated curve or analytic geometric path.
      * Geometric shapes strictly bypass Bezier smoothing to guarantee 90-degree box corners and sharp arrowheads.

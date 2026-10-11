@@ -33,9 +33,9 @@ enum class GeometricShape {
 data class CanvasConfig(
     val activeTool: CanvasTool = CanvasTool.PEN,
     val activeShape: GeometricShape = GeometricShape.NONE,
-    val penColor: Color = Color(0xFF111827), // Gitpod Pitch Black default
+    val penColor: Color = AdaptiveInkColor.Default,
     val highlighterColor: Color = Color(0xFFFFEB3B).copy(alpha = 0.45f), // Fluorescent Yellow
-    val penWidth: Float = 2.0f,
+    val penWidth: Float = 1.5f,
     val highlighterWidth: Float = 20.0f,
     val eraserRadius: Float = 24.0f,
     val touchModeEnabled: Boolean = false,

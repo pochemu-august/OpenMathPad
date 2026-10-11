@@ -174,4 +174,24 @@ class GeometrySnapperTest {
         assertEquals(72f, arrowPoints[1].x, 0.001f)
         assertEquals(72f, arrowPoints[3].x, 0.001f)
     }
+
+    @Test
+    fun createCirclePoints_createsStationaryCenterCircle() {
+        val start = StrokePoint(x = 100f, y = 100f)
+        val end = StrokePoint(x = 150f, y = 100f)
+
+        val circlePoints = GeometrySnapper.createCirclePoints(
+            start = start,
+            end = end,
+            existingStrokes = emptyList(),
+            gridSize = 36f,
+            isGridEnabled = false
+        )
+
+        assertEquals(2, circlePoints.size)
+        assertEquals(100f, circlePoints[0].x, 0.001f)
+        assertEquals(100f, circlePoints[0].y, 0.001f)
+        assertEquals(150f, circlePoints[1].x, 0.001f)
+        assertEquals(100f, circlePoints[1].y, 0.001f)
+    }
 }

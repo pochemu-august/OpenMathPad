@@ -18,18 +18,23 @@ class StrokeStabilizer(
     private var lastX: Float = Float.NaN
     private var lastY: Float = Float.NaN
     private var lastPressure: Float = Float.NaN
+    private var pointCount: Int = 0
 
     fun reset() {
         lastX = Float.NaN
         lastY = Float.NaN
         lastPressure = Float.NaN
+        pointCount = 0
     }
 
     /**
      * Filters a single coordinate in real time during MotionEvent processing.
+     * Guarantees zero-latency start by disabling trailing inertia for the first 2 points,
+     * smoothly transitioning into streamline stabilization once velocity is established.
      */
     fun filter(rawX: Float, rawY: Float, rawPressure: Float): Triple<Float, Float, Float> {
-        if (lastX.isNaN() || lastY.isNaN()) {
+        pointCount++
+        if (lastX.isNaN() || lastY.isNaN() || pointCount <= 1) {
             lastX = rawX
             lastY = rawY
             lastPressure = rawPressure
