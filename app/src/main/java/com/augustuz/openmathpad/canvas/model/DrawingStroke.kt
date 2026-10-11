@@ -1,5 +1,6 @@
 package com.augustuz.openmathpad.canvas.model
 
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -7,15 +8,17 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import com.augustuz.openmathpad.canvas.processing.BezierSmoother
 import java.util.UUID
+import kotlin.math.hypot
 
 /**
- * Represents a complete drawn stroke on the infinite canvas.
+ * Represents a complete drawn stroke or analytic geometric shape on the infinite canvas.
  *
  * @param id Unique identifier for stroke.
  * @param points List of recorded points composing this stroke.
  * @param color Color of stroke rendering.
  * @param baseWidth Base stroke width configured at drawing time.
  * @param tool Active tool used for drawing this stroke.
+ * @param shape Geometric shape mode if this stroke is a shape (bypasses Bezier smoothing).
  * @param alpha Transparency opacity value.
  */
 data class DrawingStroke(
@@ -24,14 +27,75 @@ data class DrawingStroke(
     val color: Color = Color.Black,
     val baseWidth: Float = 2.0f,
     val tool: CanvasTool = CanvasTool.PEN,
+    val shape: GeometricShape = GeometricShape.NONE,
     val alpha: Float = if (tool == CanvasTool.HIGHLIGHTER) 0.5f else 1.0f
 ) {
     /**
-     * Lazily calculated smooth curve path for rendering via Midpoint Quadratic Bezier interpolation.
-     * Cached once per stroke data model instance to prevent path rebuilding during pan and zoom.
+     * Lazily calculated curve or analytic geometric path.
+     * Geometric shapes strictly bypass Bezier smoothing to guarantee 90-degree box corners and sharp arrowheads.
      */
     val path: Path by lazy {
-        BezierSmoother.buildBezierPath(points)
+        when (shape) {
+            GeometricShape.RECTANGLE -> {
+                val p = Path()
+                if (points.isNotEmpty()) {
+                    val minX = points.minOf { it.x }
+                    val maxX = points.maxOf { it.x }
+                    val minY = points.minOf { it.y }
+                    val maxY = points.maxOf { it.y }
+                    p.moveTo(minX, minY)
+                    p.lineTo(maxX, minY)
+                    p.lineTo(maxX, maxY)
+                    p.lineTo(minX, maxY)
+                    p.close()
+                }
+                p
+            }
+            GeometricShape.VECTOR_ARROW -> {
+                val p = Path()
+                if (points.size >= 5) {
+                    // Straight stem: start -> end
+                    p.moveTo(points[0].x, points[0].y)
+                    p.lineTo(points[1].x, points[1].y)
+                    // Sharp symmetric wings: wing1 -> end -> wing2
+                    p.moveTo(points[2].x, points[2].y)
+                    p.lineTo(points[1].x, points[1].y)
+                    p.lineTo(points[4].x, points[4].y)
+                } else if (points.size >= 2) {
+                    p.moveTo(points.first().x, points.first().y)
+                    p.lineTo(points.last().x, points.last().y)
+                }
+                p
+            }
+            GeometricShape.LINE -> {
+                val p = Path()
+                if (points.isNotEmpty()) {
+                    p.moveTo(points.first().x, points.first().y)
+                    p.lineTo(points.last().x, points.last().y)
+                }
+                p
+            }
+            GeometricShape.CIRCLE -> {
+                val p = Path()
+                if (points.size >= 2) {
+                    val p0 = points[0]
+                    val p1 = points[1]
+                    val radius = hypot(p1.x - p0.x, p1.y - p0.y)
+                    p.addOval(
+                        Rect(
+                            p0.x - radius,
+                            p0.y - radius,
+                            p0.x + radius,
+                            p0.y + radius
+                        )
+                    )
+                }
+                p
+            }
+            GeometricShape.NONE -> {
+                BezierSmoother.buildBezierPath(points)
+            }
+        }
     }
 
     /**
@@ -47,7 +111,7 @@ data class DrawingStroke(
         Stroke(
             width = strokeWidth,
             cap = StrokeCap.Round,
-            join = StrokeJoin.Round
+            join = if (shape == GeometricShape.RECTANGLE) StrokeJoin.Miter else StrokeJoin.Round
         )
     }
 

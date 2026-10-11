@@ -70,15 +70,26 @@ import com.augustuz.openmathpad.canvas.model.GeometricShape
 import com.augustuz.openmathpad.canvas.state.CanvasUiState
 import kotlin.math.roundToInt
 
-// Classic School Notebook Pen Palette
-val PresetPenColors = listOf(
-    Color(0xFF1565C0), // Classic School Royal Blue (Default)
-    Color(0xFF1A1A1A), // Pitch Black
+// Gitpod Modern Developer Palette
+val PresetPenColorsLight = listOf(
+    Color(0xFF111827), // Gitpod Pitch Black (Default)
+    Color(0xFF1D4ED8), // Deep Royal Blue
     Color(0xFFC62828), // Crimson Red
-    Color(0xFF2E7D32), // Forest Green
-    Color(0xFF7B1FA2), // Vibrant Violet
-    Color(0xFFFB8C00)  // Amber Orange
+    Color(0xFF059669), // Emerald Green
+    Color(0xFF7C3AED), // Vibrant Violet
+    Color(0xFFFF8800)  // Gitpod Orange
 )
+
+val PresetPenColorsDark = listOf(
+    Color(0xFFFFFFFF), // Crisp White (Default in Dark Mode)
+    Color(0xFF38BDF8), // Vibrant Cyan
+    Color(0xFFFFAE33), // Gitpod Orange
+    Color(0xFF4ADE80), // Pastel Mint Green
+    Color(0xFFF472B6), // Pastel Rose Pink
+    Color(0xFFA78BFA)  // Pastel Lavender
+)
+
+val PresetPenColors = PresetPenColorsLight
 
 val PresetPenWidths = listOf(
     1.5f to "Thin 1.5",
@@ -126,21 +137,20 @@ fun CanvasToolbar(
     onResetZoom: () -> Unit = {}
 ) {
     val isDark = uiState.config.isDarkMode
+    val primaryAccent = if (isDark) Color(0xFFFFAE33) else Color(0xFF1D4ED8)
+    val chipSelectedContainer = if (isDark) Color(0xFF2E333D) else Color(0xFFEFF6FF)
+    val chipSelectedContent = if (isDark) Color(0xFFFFAE33) else Color(0xFF1D4ED8)
 
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(28.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isDark) {
-                MaterialTheme.colorScheme.surfaceContainerHigh
-            } else {
-                Color.White
-            }
+            containerColor = if (isDark) Color(0xFF1A1D24) else Color(0xFFFFFFFF)
         ),
         border = CardDefaults.outlinedCardBorder().copy(
             brush = androidx.compose.ui.graphics.SolidColor(
-                if (isDark) Color(0xFF383C45) else Color(0xFFE2E4E9)
+                if (isDark) Color(0xFF2E333D) else Color(0xFFE2E8F0)
             )
         )
     ) {
@@ -171,8 +181,9 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        selectedContainerColor = chipSelectedContainer,
+                        selectedLabelColor = chipSelectedContent,
+                        selectedLeadingIconColor = chipSelectedContent
                     )
                 )
 
@@ -191,8 +202,9 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        selectedContainerColor = if (isDark) Color(0xFF332B1A) else Color(0xFFFEF3C7),
+                        selectedLabelColor = if (isDark) Color(0xFFFBBF24) else Color(0xFFB45309),
+                        selectedLeadingIconColor = if (isDark) Color(0xFFFBBF24) else Color(0xFFB45309)
                     )
                 )
 
@@ -211,8 +223,9 @@ fun CanvasToolbar(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                        selectedLabelColor = MaterialTheme.colorScheme.onTertiaryContainer
+                        selectedContainerColor = if (isDark) Color(0xFF3B1D24) else Color(0xFFFEE2E2),
+                        selectedLabelColor = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626),
+                        selectedLeadingIconColor = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626)
                     )
                 )
 
@@ -236,7 +249,12 @@ fun CanvasToolbar(
                             imageVector = Icons.Default.Straighten,
                             contentDescription = "Straight Line"
                         )
-                    }
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = chipSelectedContainer,
+                        selectedLabelColor = chipSelectedContent,
+                        selectedLeadingIconColor = chipSelectedContent
+                    )
                 )
 
                 FilterChip(
@@ -251,7 +269,12 @@ fun CanvasToolbar(
                             imageVector = Icons.AutoMirrored.Filled.TrendingFlat,
                             contentDescription = "Vector Arrow"
                         )
-                    }
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = chipSelectedContainer,
+                        selectedLabelColor = chipSelectedContent,
+                        selectedLeadingIconColor = chipSelectedContent
+                    )
                 )
 
                 FilterChip(
@@ -266,7 +289,12 @@ fun CanvasToolbar(
                             imageVector = Icons.Default.CropSquare,
                             contentDescription = "Rectangle Box"
                         )
-                    }
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = chipSelectedContainer,
+                        selectedLabelColor = chipSelectedContent,
+                        selectedLeadingIconColor = chipSelectedContent
+                    )
                 )
 
                 FilterChip(
@@ -281,7 +309,12 @@ fun CanvasToolbar(
                             imageVector = Icons.Default.RadioButtonUnchecked,
                             contentDescription = "Circle"
                         )
-                    }
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = chipSelectedContainer,
+                        selectedLabelColor = chipSelectedContent,
+                        selectedLeadingIconColor = chipSelectedContent
+                    )
                 )
 
                 VerticalDivider(
@@ -301,7 +334,12 @@ fun CanvasToolbar(
                             imageVector = if (uiState.config.showGrid) Icons.Default.GridOn else Icons.Default.GridOff,
                             contentDescription = "Grid Toggle"
                         )
-                    }
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = chipSelectedContainer,
+                        selectedLabelColor = chipSelectedContent,
+                        selectedLeadingIconColor = chipSelectedContent
+                    )
                 )
 
                 // 6. Cartesian Coordinate Axes Toggle (XY)
@@ -314,7 +352,12 @@ fun CanvasToolbar(
                             imageVector = Icons.Default.Timeline,
                             contentDescription = "Cartesian Coordinate Axes"
                         )
-                    }
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = chipSelectedContainer,
+                        selectedLabelColor = chipSelectedContent,
+                        selectedLeadingIconColor = chipSelectedContent
+                    )
                 )
 
                 // 7. Dark / Light Theme Toggle
@@ -338,8 +381,8 @@ fun CanvasToolbar(
                     onClick = onAddImageClicked,
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
+                        containerColor = primaryAccent,
+                        contentColor = if (isDark) Color(0xFF121417) else Color.White
                     )
                 ) {
                     Icon(
@@ -361,7 +404,7 @@ fun CanvasToolbar(
                     onClick = onResetZoom,
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary
+                        contentColor = primaryAccent
                     )
                 ) {
                     Icon(
@@ -434,7 +477,7 @@ fun CanvasToolbar(
                     exit = fadeOut()
                 ) {
                     val isHighlighter = uiState.config.activeTool == CanvasTool.HIGHLIGHTER
-                    val colors = if (isHighlighter) PresetHighlighterColors else PresetPenColors
+                    val colors = if (isHighlighter) PresetHighlighterColors else if (isDark) PresetPenColorsDark else PresetPenColorsLight
                     val currentColor = if (isHighlighter) uiState.config.highlighterColor else uiState.config.penColor
 
                     Row(
@@ -452,13 +495,13 @@ fun CanvasToolbar(
                                         if (isSelected) {
                                             Modifier.border(
                                                 width = 3.dp,
-                                                color = MaterialTheme.colorScheme.primary,
+                                                color = primaryAccent,
                                                 shape = CircleShape
                                             )
                                         } else {
                                             Modifier.border(
                                                 width = 1.dp,
-                                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                                color = if (isDark) Color(0xFF383C45) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                                                 shape = CircleShape
                                             )
                                         }

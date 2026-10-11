@@ -11,26 +11,38 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
+import androidx.compose.ui.graphics.Color
+
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+    primary = GitpodOrange,
+    onPrimary = GitpodDarkBackground,
+    primaryContainer = GitpodDarkBorder,
+    onPrimaryContainer = GitpodOrange,
+    secondary = GitpodCyan,
+    onSecondary = GitpodDarkBackground,
+    secondaryContainer = GitpodDarkSurface,
+    onSecondaryContainer = GitpodCyan,
+    background = GitpodDarkBackground,
+    onBackground = Color.White,
+    surface = GitpodDarkSurface,
+    onSurface = Color.White,
+    outline = GitpodDarkBorder
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
+    primary = GitpodRoyalBlue,
     onPrimary = Color.White,
+    primaryContainer = Color(0xFFEFF6FF),
+    onPrimaryContainer = GitpodRoyalBlue,
+    secondary = GitpodDeepOrange,
     onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    secondaryContainer = Color(0xFFFFF7ED),
+    onSecondaryContainer = GitpodDeepOrange,
+    background = GitpodLightBackground,
+    onBackground = GitpodPitchBlack,
+    surface = GitpodLightSurface,
+    onSurface = GitpodPitchBlack,
+    outline = GitpodLightBorder
 )
 
 @Composable

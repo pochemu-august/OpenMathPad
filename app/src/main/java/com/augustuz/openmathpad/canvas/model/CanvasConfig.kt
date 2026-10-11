@@ -33,7 +33,7 @@ enum class GeometricShape {
 data class CanvasConfig(
     val activeTool: CanvasTool = CanvasTool.PEN,
     val activeShape: GeometricShape = GeometricShape.NONE,
-    val penColor: Color = Color(0xFF1565C0), // Classic School Royal Blue
+    val penColor: Color = Color(0xFF111827), // Gitpod Pitch Black default
     val highlighterColor: Color = Color(0xFFFFEB3B).copy(alpha = 0.45f), // Fluorescent Yellow
     val penWidth: Float = 2.0f,
     val highlighterWidth: Float = 20.0f,

@@ -87,7 +87,7 @@ fun InfiniteCanvas(
     viewModel: CanvasViewModel = viewModel(),
     showToolbar: Boolean = true,
     showDiagnostics: Boolean = true,
-    backgroundColor: Color = Color(0xFFFDFDFD)
+    backgroundColor: Color = Color(0xFFFFFFFF)
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val textMeasurer = rememberTextMeasurer()
@@ -122,9 +122,12 @@ fun InfiniteCanvas(
         val panY = uiState.panOffsetY
         val zoom = uiState.zoomScale
         val isDark = uiState.config.isDarkMode
-        val gridLineColor = if (isDark) Color(0xFF2C3038) else Color(0xFFDCE2EC)
-        val axesColor = if (isDark) Color(0xFF81D4FA) else Color(0xFF1565C0)
-        val effectiveBgColor = if (isDark) Color(0xFF1B1D22) else backgroundColor
+        // Gitpod Developer Theme:
+        // Dark mode: Canvas bg #121417, subtle grid #24272E, axes #38BDF8
+        // Light mode: Canvas bg #FFFFFF, grid #E2E8F0, axes #1D4ED8
+        val gridLineColor = if (isDark) Color(0xFF24272E) else Color(0xFFE2E8F0)
+        val axesColor = if (isDark) Color(0xFF38BDF8) else Color(0xFF1D4ED8)
+        val effectiveBgColor = if (isDark) Color(0xFF121417) else backgroundColor
 
         // 1. Hardware-Accelerated Drawing Surface (Squared Grid + Coordinate Axes + Vector Inking)
         Canvas(
@@ -361,7 +364,7 @@ private fun CanvasImageCard(
                     val deltaX = dragAmount.x / zoomScale
                     val deltaY = dragAmount.y / zoomScale
                     val deltaScale = (-deltaX - deltaY * aspectRatio) / 2f
-                    val newWidth = max(80f, image.width + deltaScale)
+                    val newWidth = max(64f, image.width + deltaScale)
                     val newHeight = newWidth / aspectRatio
                     val posX = image.x + (image.width - newWidth)
                     val posY = image.y + (image.height - newHeight)
@@ -378,7 +381,7 @@ private fun CanvasImageCard(
                     val deltaX = dragAmount.x / zoomScale
                     val deltaY = dragAmount.y / zoomScale
                     val deltaScale = (deltaX - deltaY * aspectRatio) / 2f
-                    val newWidth = max(80f, image.width + deltaScale)
+                    val newWidth = max(64f, image.width + deltaScale)
                     val newHeight = newWidth / aspectRatio
                     val posY = image.y + (image.height - newHeight)
                     onGeometryChange(image.x, posY, newWidth, newHeight)
@@ -394,7 +397,7 @@ private fun CanvasImageCard(
                     val deltaX = dragAmount.x / zoomScale
                     val deltaY = dragAmount.y / zoomScale
                     val deltaScale = (-deltaX + deltaY * aspectRatio) / 2f
-                    val newWidth = max(80f, image.width + deltaScale)
+                    val newWidth = max(64f, image.width + deltaScale)
                     val newHeight = newWidth / aspectRatio
                     val posX = image.x + (image.width - newWidth)
                     onGeometryChange(posX, image.y, newWidth, newHeight)
@@ -410,7 +413,7 @@ private fun CanvasImageCard(
                     val deltaX = dragAmount.x / zoomScale
                     val deltaY = dragAmount.y / zoomScale
                     val deltaScale = (deltaX + deltaY * aspectRatio) / 2f
-                    val newWidth = max(80f, image.width + deltaScale)
+                    val newWidth = max(64f, image.width + deltaScale)
                     val newHeight = newWidth / aspectRatio
                     onGeometryChange(image.x, image.y, newWidth, newHeight)
                 }

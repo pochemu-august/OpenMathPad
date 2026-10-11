@@ -233,4 +233,69 @@ class CanvasViewModelTest {
         assertEquals(1, restoredState.images.size)
         assertEquals(1, restoredState.strokes.size)
     }
+
+    @Test
+    fun gitpodTheme_togglingDarkMode_switchesDefaultInkColors() {
+        // Default light mode has Gitpod Pitch Black #111827 ink
+        assertEquals(Color(0xFF111827), viewModel.uiState.value.config.penColor)
+
+        // Toggling to dark mode should auto-switch default ink to Crisp White #FFFFFF
+        viewModel.toggleDarkMode()
+        assertTrue(viewModel.uiState.value.config.isDarkMode)
+        assertEquals(Color(0xFFFFFFFF), viewModel.uiState.value.config.penColor)
+
+        // Toggling back to light mode should restore Pitch Black #111827
+        viewModel.toggleDarkMode()
+        assertFalse(viewModel.uiState.value.config.isDarkMode)
+        assertEquals(Color(0xFF111827), viewModel.uiState.value.config.penColor)
+    }
+
+    @Test
+    fun mediaResize_clampsToMinimum64dp() {
+        viewModel.addImage("test.png", x = 0f, y = 0f, width = 200f, height = 200f)
+        val imageId = viewModel.uiState.value.images.first().id
+
+        // Attempt resizing below 64dp
+        viewModel.resizeImage(imageId, width = 20f, height = 30f)
+        val clamped = viewModel.uiState.value.images.first()
+        assertEquals(64f, clamped.width, 0.001f)
+        assertEquals(64f, clamped.height, 0.001f)
+
+        // Attempt updateImageGeometry below 64dp
+        viewModel.updateImageGeometry(imageId, 10f, 10f, 40f, 50f)
+        val geomClamped = viewModel.uiState.value.images.first()
+        assertEquals(64f, geomClamped.width, 0.001f)
+        assertEquals(64f, geomClamped.height, 0.001f)
+    }
+
+    @Test
+    fun geometricShapes_drawingStroke_createsAnalyticShapes() {
+        val boxPoints = listOf(
+            StrokePoint(0f, 0f),
+            StrokePoint(100f, 0f),
+            StrokePoint(100f, 80f),
+            StrokePoint(0f, 80f),
+            StrokePoint(0f, 0f)
+        )
+        val boxStroke = DrawingStroke(
+            points = boxPoints,
+            shape = com.augustuz.openmathpad.canvas.model.GeometricShape.RECTANGLE
+        )
+        assertNotNull(boxStroke.path)
+        assertEquals(com.augustuz.openmathpad.canvas.model.GeometricShape.RECTANGLE, boxStroke.shape)
+
+        val vectorPoints = listOf(
+            StrokePoint(0f, 0f),
+            StrokePoint(100f, 0f),
+            StrokePoint(80f, -10f),
+            StrokePoint(100f, 0f),
+            StrokePoint(80f, 10f)
+        )
+        val vectorStroke = DrawingStroke(
+            points = vectorPoints,
+            shape = com.augustuz.openmathpad.canvas.model.GeometricShape.VECTOR_ARROW
+        )
+        assertNotNull(vectorStroke.path)
+        assertEquals(com.augustuz.openmathpad.canvas.model.GeometricShape.VECTOR_ARROW, vectorStroke.shape)
+    }
 }

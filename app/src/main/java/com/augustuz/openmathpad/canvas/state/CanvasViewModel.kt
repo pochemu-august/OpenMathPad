@@ -104,6 +104,29 @@ class CanvasViewModel : ViewModel() {
     private var lastGestureMidY: Float = 0f
     private var lastGestureDistance: Float = 0f
 
+    // Stroke Duration Tracking (Micro-tick / Stray Stroke Filtering)
+    private var strokeStartTimeMs: Long = 0L
+
+    // Interactive Media / Task Image Gesture Tracking
+    enum class ImageDragHandle {
+        NONE,
+        BODY,
+        TOP_LEFT,
+        TOP_RIGHT,
+        BOTTOM_LEFT,
+        BOTTOM_RIGHT
+    }
+
+    private var activeImageId: String? = null
+    private var activeImageHandle: ImageDragHandle = ImageDragHandle.NONE
+    private var imageDragStartSceneX: Float = 0f
+    private var imageDragStartSceneY: Float = 0f
+    private var imageInitialX: Float = 0f
+    private var imageInitialY: Float = 0f
+    private var imageInitialWidth: Float = 0f
+    private var imageInitialHeight: Float = 0f
+    private var imageMovedOrResized: Boolean = false
+
     /**
      * Clamps zoom scale to specified range [MIN_ZOOM, MAX_ZOOM].
      */
@@ -170,10 +193,32 @@ class CanvasViewModel : ViewModel() {
         val panX = _uiState.value.panOffsetX
         val panY = _uiState.value.panOffsetY
         val zoom = _uiState.value.zoomScale
+        val sceneX = (event.x - panX) / zoom
+        val sceneY = (event.y - panY) / zoom
 
-        // Deselect any selected image if drawing begins on canvas
-        if (event.actionMasked == MotionEvent.ACTION_DOWN && _uiState.value.selectedImageId != null) {
-            selectImage(null)
+        // 0. Interactive Task Image Manipulation (Hit-test, Drag, Resize, Delete)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (checkAndStartImageInteraction(event.x, event.y, sceneX, sceneY, zoom, panX, panY)) {
+                    return true
+                }
+                // Tapping outside on empty canvas deselects any selected image
+                if (_uiState.value.selectedImageId != null) {
+                    selectImage(null)
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (activeImageId != null) {
+                    handleImageDrag(sceneX, sceneY)
+                    return true
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (activeImageId != null) {
+                    finishImageInteraction()
+                    return true
+                }
+            }
         }
 
         // 1. Check if any pointer is a hardware stylus
@@ -289,6 +334,7 @@ class CanvasViewModel : ViewModel() {
                     activePoints.clear()
                     holdStraightenJob?.cancel()
                     isStrokeStraightened = false
+                    strokeStartTimeMs = System.currentTimeMillis()
                     lastMoveScreenX = event.getX(actionIndex)
                     lastMoveScreenY = event.getY(actionIndex)
 
@@ -355,7 +401,8 @@ class CanvasViewModel : ViewModel() {
                             points = activePoints.toList(),
                             tool = activeTool,
                             config = config,
-                            id = strokeId
+                            id = strokeId,
+                            shape = config.activeShape
                         )
                         _uiState.update { state ->
                             state.copy(
@@ -395,6 +442,7 @@ class CanvasViewModel : ViewModel() {
                     activePoints.clear()
                     holdStraightenJob?.cancel()
                     isStrokeStraightened = false
+                    strokeStartTimeMs = System.currentTimeMillis()
                     lastMoveScreenX = event.getX(candidateIndex)
                     lastMoveScreenY = event.getY(candidateIndex)
                     currentStrokeId = java.util.UUID.randomUUID().toString()
@@ -457,7 +505,8 @@ class CanvasViewModel : ViewModel() {
                                     points = shapePts,
                                     tool = activeTool,
                                     config = config,
-                                    id = currentStrokeId ?: java.util.UUID.randomUUID().toString()
+                                    id = currentStrokeId ?: java.util.UUID.randomUUID().toString(),
+                                    shape = config.activeShape
                                 )
                                 _uiState.update { state ->
                                     state.copy(
@@ -488,7 +537,8 @@ class CanvasViewModel : ViewModel() {
                                     points = straightPts,
                                     tool = activeTool,
                                     config = config,
-                                    id = currentStrokeId ?: java.util.UUID.randomUUID().toString()
+                                    id = currentStrokeId ?: java.util.UUID.randomUUID().toString(),
+                                    shape = GeometricShape.LINE
                                 )
                                 _uiState.update { state ->
                                     state.copy(
@@ -521,7 +571,8 @@ class CanvasViewModel : ViewModel() {
                                 points = activePoints.toList(),
                                 tool = activeTool,
                                 config = config,
-                                id = currentStrokeId ?: java.util.UUID.randomUUID().toString()
+                                id = currentStrokeId ?: java.util.UUID.randomUUID().toString(),
+                                shape = GeometricShape.NONE
                             )
                             _uiState.update { state ->
                                 state.copy(
@@ -624,8 +675,45 @@ class CanvasViewModel : ViewModel() {
         holdStraightenJob?.cancel()
         val activeStroke = _uiState.value.currentActiveStroke
         if (activeStroke != null && activeStroke.points.isNotEmpty()) {
+            val pts = activeStroke.points
+            val durationMs = System.currentTimeMillis() - strokeStartTimeMs
+            val zoom = _uiState.value.zoomScale
+
+            // Accidental stray stroke / micro-tick filter:
+            // Discard strokes with <= 2 points and bounding length < 16px (approx 6dp) if duration < 150ms.
+            val minX = pts.minOf { it.x }
+            val maxX = pts.maxOf { it.x }
+            val minY = pts.minOf { it.y }
+            val maxY = pts.maxOf { it.y }
+            val boundingLengthScreenPx = hypot(maxX - minX, maxY - minY) * zoom
+
+            if (config.activeShape == GeometricShape.NONE && pts.size <= 2 && boundingLengthScreenPx < 16f) {
+                if (durationMs < 150L) {
+                    discardActiveStroke()
+                    return
+                } else {
+                    // Deliberate static tap (duration >= 150ms with zero movement):
+                    // Render as a clean circular dot
+                    val dotStroke = activeStroke.copy(
+                        points = listOf(pts.first()),
+                        shape = GeometricShape.NONE
+                    )
+                    saveUndoState()
+                    _uiState.update { state ->
+                        state.copy(
+                            strokes = state.strokes + dotStroke,
+                            currentActiveStroke = null,
+                            canUndo = undoStack.isNotEmpty(),
+                            canRedo = redoStack.isNotEmpty()
+                        )
+                    }
+                    discardActiveStroke()
+                    return
+                }
+            }
+
             val finalStroke = if (config.activeShape != GeometricShape.NONE) {
-                activeStroke
+                activeStroke.copy(shape = config.activeShape)
             } else if ((isStrokeStraightened || config.rulerModeEnabled) && activeStroke.points.size >= 2) {
                 val straightPts = GeometrySnapper.createStraightLinePoints(
                     points = listOf(activeStroke.points.first(), activeStroke.points.last()),
@@ -634,7 +722,7 @@ class CanvasViewModel : ViewModel() {
                     isGridEnabled = config.showGrid,
                     snapThreshold = 20f
                 )
-                activeStroke.copy(points = straightPts)
+                activeStroke.copy(points = straightPts, shape = GeometricShape.LINE)
             } else {
                 activeStroke
             }
@@ -648,12 +736,8 @@ class CanvasViewModel : ViewModel() {
                     canRedo = redoStack.isNotEmpty()
                 )
             }
-        } else {
-            _uiState.update { it.copy(currentActiveStroke = null) }
         }
-        activePoints.clear()
-        currentStrokeId = null
-        isStrokeStraightened = false
+        discardActiveStroke()
     }
 
     /**
@@ -732,7 +816,8 @@ class CanvasViewModel : ViewModel() {
         points: List<StrokePoint>,
         tool: CanvasTool,
         config: CanvasConfig,
-        id: String
+        id: String,
+        shape: GeometricShape = config.activeShape
     ): DrawingStroke {
         return DrawingStroke(
             id = id,
@@ -743,7 +828,12 @@ class CanvasViewModel : ViewModel() {
                 CanvasTool.ERASER -> Color.Transparent
             },
             baseWidth = getBaseWidthForTool(tool, config),
-            tool = tool
+            tool = tool,
+            shape = if (isStrokeStraightened || config.rulerModeEnabled) {
+                if (shape == GeometricShape.NONE) GeometricShape.LINE else shape
+            } else {
+                shape
+            }
         )
     }
 
@@ -856,8 +946,8 @@ class CanvasViewModel : ViewModel() {
      * Resizes an image card proportionally in scene coordinates.
      */
     fun resizeImage(id: String, width: Float, height: Float) {
-        val clampedWidth = max(80f, width)
-        val clampedHeight = max(60f, height)
+        val clampedWidth = max(64f, width)
+        val clampedHeight = max(64f, height)
         _uiState.update { state ->
             val updated = state.images.map { img ->
                 if (img.id == id) img.copy(width = clampedWidth, height = clampedHeight) else img
@@ -870,14 +960,166 @@ class CanvasViewModel : ViewModel() {
      * Updates an image card's full geometry (position + dimensions) during corner dragging.
      */
     fun updateImageGeometry(id: String, x: Float, y: Float, width: Float, height: Float) {
-        val clampedWidth = max(80f, width)
-        val clampedHeight = max(60f, height)
+        val clampedWidth = max(64f, width)
+        val clampedHeight = max(64f, height)
         _uiState.update { state ->
             val updated = state.images.map { img ->
                 if (img.id == id) img.copy(x = x, y = y, width = clampedWidth, height = clampedHeight) else img
             }
             state.copy(images = updated)
         }
+    }
+
+    private fun checkAndStartImageInteraction(
+        screenX: Float,
+        screenY: Float,
+        sceneX: Float,
+        sceneY: Float,
+        zoom: Float,
+        panX: Float,
+        panY: Float
+    ): Boolean {
+        val selectedId = _uiState.value.selectedImageId
+        val images = _uiState.value.images
+        val selectedImg = images.find { it.id == selectedId }
+
+        if (selectedImg != null) {
+            val cornerTR_X = (selectedImg.x + selectedImg.width) * zoom + panX
+            val cornerTR_Y = selectedImg.y * zoom + panY
+            val deleteCenterX = cornerTR_X + 24f
+            val deleteCenterY = cornerTR_Y - 24f
+
+            // 1. Check Delete button
+            if (hypot(screenX - deleteCenterX, screenY - deleteCenterY) <= 36f ||
+                (screenX in cornerTR_X..(cornerTR_X + 40f) && screenY in (cornerTR_Y - 40f)..cornerTR_Y)
+            ) {
+                removeImage(selectedImg.id)
+                activeImageId = null
+                activeImageHandle = ImageDragHandle.NONE
+                return true
+            }
+
+            // 2. Check 4 corner resize handles
+            val cornerTL_X = selectedImg.x * zoom + panX
+            val cornerTL_Y = selectedImg.y * zoom + panY
+            val cornerBL_X = selectedImg.x * zoom + panX
+            val cornerBL_Y = (selectedImg.y + selectedImg.height) * zoom + panY
+            val cornerBR_X = (selectedImg.x + selectedImg.width) * zoom + panX
+            val cornerBR_Y = (selectedImg.y + selectedImg.height) * zoom + panY
+
+            val handleHitRadius = 38f // generous touch radius for handles
+
+            val handle = when {
+                hypot(screenX - cornerTL_X, screenY - cornerTL_Y) <= handleHitRadius -> ImageDragHandle.TOP_LEFT
+                hypot(screenX - cornerTR_X, screenY - cornerTR_Y) <= handleHitRadius -> ImageDragHandle.TOP_RIGHT
+                hypot(screenX - cornerBL_X, screenY - cornerBL_Y) <= handleHitRadius -> ImageDragHandle.BOTTOM_LEFT
+                hypot(screenX - cornerBR_X, screenY - cornerBR_Y) <= handleHitRadius -> ImageDragHandle.BOTTOM_RIGHT
+                else -> ImageDragHandle.NONE
+            }
+
+            if (handle != ImageDragHandle.NONE) {
+                activeImageId = selectedImg.id
+                activeImageHandle = handle
+                imageDragStartSceneX = sceneX
+                imageDragStartSceneY = sceneY
+                imageInitialX = selectedImg.x
+                imageInitialY = selectedImg.y
+                imageInitialWidth = selectedImg.width
+                imageInitialHeight = selectedImg.height
+                imageMovedOrResized = false
+                return true
+            }
+
+            // 3. Check inside selected image body
+            if (sceneX in selectedImg.x..(selectedImg.x + selectedImg.width) &&
+                sceneY in selectedImg.y..(selectedImg.y + selectedImg.height)
+            ) {
+                activeImageId = selectedImg.id
+                activeImageHandle = ImageDragHandle.BODY
+                imageDragStartSceneX = sceneX
+                imageDragStartSceneY = sceneY
+                imageInitialX = selectedImg.x
+                imageInitialY = selectedImg.y
+                imageInitialWidth = selectedImg.width
+                imageInitialHeight = selectedImg.height
+                imageMovedOrResized = false
+                return true
+            }
+        }
+
+        // 4. Check other images (topmost first)
+        for (i in images.indices.reversed()) {
+            val img = images[i]
+            if (img.id == selectedId) continue
+            if (sceneX in img.x..(img.x + img.width) && sceneY in img.y..(img.y + img.height)) {
+                selectImage(img.id)
+                activeImageId = img.id
+                activeImageHandle = ImageDragHandle.BODY
+                imageDragStartSceneX = sceneX
+                imageDragStartSceneY = sceneY
+                imageInitialX = img.x
+                imageInitialY = img.y
+                imageInitialWidth = img.width
+                imageInitialHeight = img.height
+                imageMovedOrResized = false
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun handleImageDrag(sceneX: Float, sceneY: Float) {
+        val targetId = activeImageId ?: return
+        val deltaSceneX = sceneX - imageDragStartSceneX
+        val deltaSceneY = sceneY - imageDragStartSceneY
+        imageMovedOrResized = true
+
+        val aspectRatio = max(0.1f, imageInitialWidth / max(1f, imageInitialHeight))
+
+        when (activeImageHandle) {
+            ImageDragHandle.BODY -> {
+                updateImagePosition(targetId, imageInitialX + deltaSceneX, imageInitialY + deltaSceneY)
+            }
+            ImageDragHandle.BOTTOM_RIGHT -> {
+                val deltaScale = (deltaSceneX + deltaSceneY * aspectRatio) / 2f
+                val newWidth = max(64f, imageInitialWidth + deltaScale)
+                val newHeight = newWidth / aspectRatio
+                updateImageGeometry(targetId, imageInitialX, imageInitialY, newWidth, newHeight)
+            }
+            ImageDragHandle.TOP_LEFT -> {
+                val deltaScale = (-deltaSceneX - deltaSceneY * aspectRatio) / 2f
+                val newWidth = max(64f, imageInitialWidth + deltaScale)
+                val newHeight = newWidth / aspectRatio
+                val newX = imageInitialX + (imageInitialWidth - newWidth)
+                val newY = imageInitialY + (imageInitialHeight - newHeight)
+                updateImageGeometry(targetId, newX, newY, newWidth, newHeight)
+            }
+            ImageDragHandle.TOP_RIGHT -> {
+                val deltaScale = (deltaSceneX - deltaSceneY * aspectRatio) / 2f
+                val newWidth = max(64f, imageInitialWidth + deltaScale)
+                val newHeight = newWidth / aspectRatio
+                val newY = imageInitialY + (imageInitialHeight - newHeight)
+                updateImageGeometry(targetId, imageInitialX, newY, newWidth, newHeight)
+            }
+            ImageDragHandle.BOTTOM_LEFT -> {
+                val deltaScale = (-deltaSceneX + deltaSceneY * aspectRatio) / 2f
+                val newWidth = max(64f, imageInitialWidth + deltaScale)
+                val newHeight = newWidth / aspectRatio
+                val newX = imageInitialX + (imageInitialWidth - newWidth)
+                updateImageGeometry(targetId, newX, imageInitialY, newWidth, newHeight)
+            }
+            ImageDragHandle.NONE -> {}
+        }
+    }
+
+    private fun finishImageInteraction() {
+        if (imageMovedOrResized) {
+            saveUndoState()
+        }
+        activeImageId = null
+        activeImageHandle = ImageDragHandle.NONE
+        imageMovedOrResized = false
     }
 
     /**
@@ -918,7 +1160,16 @@ class CanvasViewModel : ViewModel() {
     }
 
     fun toggleDarkMode() {
-        _uiState.update { it.copy(config = it.config.copy(isDarkMode = !it.config.isDarkMode)) }
+        _uiState.update { state ->
+            val newDarkMode = !state.config.isDarkMode
+            val currentPenColor = state.config.penColor
+            val newPenColor = if (newDarkMode) {
+                if (currentPenColor == Color(0xFF111827) || currentPenColor == Color(0xFF1A1A1A)) Color(0xFFFFFFFF) else currentPenColor
+            } else {
+                if (currentPenColor == Color(0xFFFFFFFF)) Color(0xFF111827) else currentPenColor
+            }
+            state.copy(config = state.config.copy(isDarkMode = newDarkMode, penColor = newPenColor))
+        }
     }
 
     fun setPenColor(color: Color) {

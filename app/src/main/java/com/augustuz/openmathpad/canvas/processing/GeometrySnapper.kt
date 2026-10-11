@@ -147,7 +147,8 @@ object GeometrySnapper {
     }
 
     /**
-     * Generates points for a Vector Arrow (line segment with arrowhead wings).
+     * Generates points for a Vector Arrow (line segment with sharp symmetric arrowhead wings).
+     * Wings are angled backwards at 150 degrees relative to trajectory.
      */
     fun createVectorArrowPoints(
         start: StrokePoint,
@@ -161,13 +162,13 @@ object GeometrySnapper {
         val (eX, eY) = snapPoint(end.x, end.y, existingStrokes, gridSize, isGridEnabled, snapThreshold)
 
         val angle = atan2(eY - sY, eX - sX)
-        val arrowLen = 16f
-        val wingAngle = 0.52f // ~30 degrees
+        val arrowLen = 22f
+        val wingAngleRad = 2.61799f // 150 degrees backwards from trajectory
 
-        val w1X = eX - arrowLen * cos(angle - wingAngle)
-        val w1Y = eY - arrowLen * sin(angle - wingAngle)
-        val w2X = eX - arrowLen * cos(angle + wingAngle)
-        val w2Y = eY - arrowLen * sin(angle + wingAngle)
+        val w1X = eX + arrowLen * cos(angle + wingAngleRad)
+        val w1Y = eY + arrowLen * sin(angle + wingAngleRad)
+        val w2X = eX + arrowLen * cos(angle - wingAngleRad)
+        val w2Y = eY + arrowLen * sin(angle - wingAngleRad)
 
         val time = end.timestamp
         val width = start.width
@@ -184,7 +185,7 @@ object GeometrySnapper {
     }
 
     /**
-     * Generates points for a Rectangle / Box with 4 corners and closed loop.
+     * Generates points for a strict closed Rectangle / Box with 4 corners and closed loop.
      */
     fun createRectanglePoints(
         start: StrokePoint,
@@ -197,17 +198,23 @@ object GeometrySnapper {
         val (sX, sY) = snapPoint(start.x, start.y, existingStrokes, gridSize, isGridEnabled, snapThreshold)
         val (eX, eY) = snapPoint(end.x, end.y, existingStrokes, gridSize, isGridEnabled, snapThreshold)
 
+        val left = minOf(sX, eX)
+        val top = minOf(sY, eY)
+        val right = maxOf(sX, eX)
+        val bottom = maxOf(sY, eY)
+
         val time = end.timestamp
         val width = start.width
         val pressure = 0.5f
 
-        // Corners: (sX, sY) -> (eX, sY) -> (eX, eY) -> (sX, eY) -> (sX, sY)
+        // Strict 90-degree closed rectangle corners:
+        // (left, top) -> (right, top) -> (right, bottom) -> (left, bottom) -> (left, top)
         return listOf(
-            StrokePoint(sX, sY, pressure, width, start.timestamp),
-            StrokePoint(eX, sY, pressure, width, time),
-            StrokePoint(eX, eY, pressure, width, time),
-            StrokePoint(sX, eY, pressure, width, time),
-            StrokePoint(sX, sY, pressure, width, time)
+            StrokePoint(left, top, pressure, width, start.timestamp),
+            StrokePoint(right, top, pressure, width, time),
+            StrokePoint(right, bottom, pressure, width, time),
+            StrokePoint(left, bottom, pressure, width, time),
+            StrokePoint(left, top, pressure, width, time)
         )
     }
 
