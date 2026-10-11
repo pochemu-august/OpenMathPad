@@ -14,10 +14,7 @@ import com.augustuz.openmathpad.canvas.processing.PalmRejectionFilter
 import com.augustuz.openmathpad.canvas.processing.PressureSmoother
 import com.augustuz.openmathpad.canvas.processing.StrokeBeautifier
 import com.augustuz.openmathpad.canvas.processing.StrokeEraser
-import com.augustuz.openmathpad.mathengine.MathEngine
-import com.augustuz.openmathpad.mathengine.model.AngleMode
-import com.augustuz.openmathpad.mathengine.model.EvaluationContext
-import com.augustuz.openmathpad.mathengine.model.MathResult
+import com.augustuz.openmathpad.canvas.processing.StrokeStabilizer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,21 +35,22 @@ data class InputDiagnostics(
 )
 
 /**
- * Historical snapshot of drawing surface, media images, and annotations for undo/redo.
+ * Historical snapshot of drawing surface and media images for undo/redo.
  */
 data class CanvasSnapshot(
     val strokes: List<DrawingStroke>,
-    val textAnnotations: List<CanvasTextAnnotation>,
+    val textAnnotations: List<CanvasTextAnnotation> = emptyList(),
     val images: List<CanvasImage> = emptyList()
 )
 
 /**
- * UI State for Infinite Canvas, Stroke Beautification, Image insertion, and MathEngine scratchpad.
+ * UI State for Infinite Canvas, Calligraphic Inking, and Media Task Insertion.
  */
 data class CanvasUiState(
     val strokes: List<DrawingStroke> = emptyList(),
     val canvasTextAnnotations: List<CanvasTextAnnotation> = emptyList(),
     val images: List<CanvasImage> = emptyList(),
+    val selectedImageId: String? = null,
     val currentActiveStroke: DrawingStroke? = null,
     val config: CanvasConfig = CanvasConfig(),
     val canUndo: Boolean = false,
@@ -62,24 +60,14 @@ data class CanvasUiState(
     // Infinite Canvas Navigation & Transformation State
     val panOffsetX: Float = 0f,
     val panOffsetY: Float = 0f,
-    val zoomScale: Float = 1.0f,
-
-    // Math Engine / STEM Formula Scratchpad State
-    val formulaText: String = "",
-    val currentResult: MathResult? = null,
-    val calculationHistory: List<MathResult> = emptyList(),
-    val evaluationContext: EvaluationContext = EvaluationContext(),
-    val isOverlayVisible: Boolean = false,
-    val isOverlayExpanded: Boolean = false
+    val zoomScale: Float = 1.0f
 )
 
 /**
- * ViewModel managing infinite canvas coordinate transformations, stylus vs touch gesture separation,
- * stroke beautification pipeline, media insertion, and MathEngine integration.
+ * ViewModel managing infinite canvas coordinate transformations, stylus vs touch separation,
+ * real-time stroke stabilization, calligraphic beautification, and image card interactions.
  */
-class CanvasViewModel @JvmOverloads constructor(
-    private val mathEngine: MathEngine = MathEngine()
-) : ViewModel() {
+class CanvasViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(CanvasUiState())
     val uiState: StateFlow<CanvasUiState> = _uiState.asStateFlow()
@@ -88,6 +76,7 @@ class CanvasViewModel @JvmOverloads constructor(
     private val redoStack = mutableListOf<CanvasSnapshot>()
 
     private val pressureSmoother = PressureSmoother()
+    private val strokeStabilizer = StrokeStabilizer()
     private val activePoints = mutableListOf<StrokePoint>()
     private var currentStrokeId: String? = null
     private var activePointerId: Int? = null
@@ -154,7 +143,7 @@ class CanvasViewModel @JvmOverloads constructor(
 
     /**
      * Processes incoming MotionEvent with:
-     * - Stylus: draws strokes mapped to canvas scene coordinates `(screen - pan) / zoom`.
+     * - Stylus: draws strokes with real-time streamline stabilization and scene mapping.
      * - Two-finger gestures: pans and pinch-to-zooms the infinite canvas.
      * - Single finger: ignored by default (100% palm rejection) unless touchModeEnabled.
      */
@@ -166,23 +155,24 @@ class CanvasViewModel @JvmOverloads constructor(
         val panY = _uiState.value.panOffsetY
         val zoom = _uiState.value.zoomScale
 
+        // Deselect any selected image if drawing begins on canvas
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && _uiState.value.selectedImageId != null) {
+            selectImage(null)
+        }
+
         // 1. Check if any pointer is a hardware stylus
         var stylusPointerIndex = -1
-        var fingerCount = 0
         for (i in 0 until pointerCount) {
             val tool = event.getToolType(i)
             if (tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER) {
                 stylusPointerIndex = i
                 break
-            } else if (tool == MotionEvent.TOOL_TYPE_FINGER) {
-                fingerCount++
             }
         }
         val hasStylus = stylusPointerIndex != -1
 
         // 2. Two-Finger Navigation Handling (Pan & Pinch-to-Zoom)
         if (!hasStylus && pointerCount >= 2) {
-            // Discard any accidental stroke that started before the second finger touched
             if (activePointerId != null) {
                 discardActiveStroke()
             }
@@ -213,9 +203,6 @@ class CanvasViewModel @JvmOverloads constructor(
                         val currentZoom = _uiState.value.zoomScale
                         val newZoom = clampZoom(currentZoom * scaleFactor)
 
-                        // Focal zoom around two-finger midpoint:
-                        // sceneFocus = (midX - panX) / currentZoom
-                        // newPanX = midX - sceneFocus * newZoom + deltaMidX
                         val currentPanX = _uiState.value.panOffsetX
                         val currentPanY = _uiState.value.panOffsetY
 
@@ -245,7 +232,6 @@ class CanvasViewModel @JvmOverloads constructor(
             return true
         }
 
-        // If gesture navigating ended
         if (pointerCount < 2) {
             isGestureNavigating = false
         }
@@ -261,7 +247,6 @@ class CanvasViewModel @JvmOverloads constructor(
 
         var activeIndex = if (activePointerId != null) event.findPointerIndex(activePointerId!!) else -1
 
-        // If previously tracking a finger but a stylus arrives, prioritize the stylus
         if (hasStylus && !activePointerIsStylus && stylusPointerIndex != -1) {
             discardActiveStroke()
             activePointerId = null
@@ -284,6 +269,7 @@ class CanvasViewModel @JvmOverloads constructor(
                     activeIndex = actionIndex
 
                     pressureSmoother.reset()
+                    strokeStabilizer.reset()
                     activePoints.clear()
                     val strokeId = java.util.UUID.randomUUID().toString()
                     currentStrokeId = strokeId
@@ -301,7 +287,8 @@ class CanvasViewModel @JvmOverloads constructor(
                         pointerIndex = actionIndex,
                         panOffsetX = panX,
                         panOffsetY = panY,
-                        zoomScale = zoom
+                        zoomScale = zoom,
+                        strokeStabilizer = strokeStabilizer
                     )
 
                     if (activeTool == CanvasTool.ERASER) {
@@ -342,7 +329,6 @@ class CanvasViewModel @JvmOverloads constructor(
                         }
                     }
                 } else if (!isAllowedTouch) {
-                    // 100% Palm Rejection: Single finger ignored by default
                     _uiState.update { state ->
                         state.copy(
                             diagnostics = state.diagnostics.copy(
@@ -363,6 +349,7 @@ class CanvasViewModel @JvmOverloads constructor(
                     activeIndex = candidateIndex
 
                     pressureSmoother.reset()
+                    strokeStabilizer.reset()
                     activePoints.clear()
                     currentStrokeId = java.util.UUID.randomUUID().toString()
                 }
@@ -382,7 +369,8 @@ class CanvasViewModel @JvmOverloads constructor(
                         pointerIndex = activeIndex,
                         panOffsetX = panX,
                         panOffsetY = panY,
-                        zoomScale = zoom
+                        zoomScale = zoom,
+                        strokeStabilizer = strokeStabilizer
                     )
 
                     if (activeTool == CanvasTool.ERASER) {
@@ -456,17 +444,17 @@ class CanvasViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Finalizes current in-progress stroke and runs the Stroke Beautification pipeline:
+     * Finalizes current in-progress stroke and applies the full Stroke Beautification pipeline:
      * - Moving average jitter reduction
      * - RDP curve simplification
-     * - Dynamic velocity/pressure thickness interpolation & end tapering
+     * - Chaikin corner-cutting curve smoothing
+     * - Calligraphic pressure and velocity tapering
      */
     private fun finalizeActiveStroke(config: CanvasConfig) {
         val activeStroke = _uiState.value.currentActiveStroke
         if (activeStroke != null && activeStroke.points.isNotEmpty()) {
             saveUndoState()
 
-            // Run Stroke Beautification pipeline on finished stroke
             val beautified = StrokeBeautifier.beautifyStroke(activeStroke)
 
             _uiState.update { state ->
@@ -538,14 +526,13 @@ class CanvasViewModel @JvmOverloads constructor(
         }
     }
 
-    // --- Image / Media Insertion Engine ---
+    // --- Interactive Media / Task Image Management ---
 
     /**
-     * Inserts an image / STEM problem screenshot onto the canvas scene.
-     * Places the image in the center of the current infinite canvas viewport if position is null.
+     * Inserts an image card onto the infinite canvas scene.
      */
     fun addImage(
-        uri: String,
+        filePath: String,
         x: Float? = null,
         y: Float? = null,
         width: Float = 360f,
@@ -554,7 +541,6 @@ class CanvasViewModel @JvmOverloads constructor(
         saveUndoState()
 
         val sceneX = x ?: run {
-            // Place at default viewport offset
             val currentPanX = _uiState.value.panOffsetX
             val currentZoom = _uiState.value.zoomScale
             (400f - currentPanX) / currentZoom - width / 2f
@@ -567,16 +553,19 @@ class CanvasViewModel @JvmOverloads constructor(
         }
 
         val newImage = CanvasImage(
-            uri = uri,
+            filePath = filePath,
             x = sceneX,
             y = sceneY,
             width = width,
-            height = height
+            height = height,
+            isSelected = true
         )
 
         _uiState.update { state ->
+            val updatedImages = state.images.map { it.copy(isSelected = false) } + newImage
             state.copy(
-                images = state.images + newImage,
+                images = updatedImages,
+                selectedImageId = newImage.id,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty()
             )
@@ -596,14 +585,28 @@ class CanvasViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Resizes an image card in scene coordinates.
+     * Resizes an image card proportionally in scene coordinates.
      */
     fun resizeImage(id: String, width: Float, height: Float) {
-        val clampedWidth = max(100f, width)
-        val clampedHeight = max(80f, height)
+        val clampedWidth = max(80f, width)
+        val clampedHeight = max(60f, height)
         _uiState.update { state ->
             val updated = state.images.map { img ->
                 if (img.id == id) img.copy(width = clampedWidth, height = clampedHeight) else img
+            }
+            state.copy(images = updated)
+        }
+    }
+
+    /**
+     * Updates an image card's full geometry (position + dimensions) during corner dragging.
+     */
+    fun updateImageGeometry(id: String, x: Float, y: Float, width: Float, height: Float) {
+        val clampedWidth = max(80f, width)
+        val clampedHeight = max(60f, height)
+        _uiState.update { state ->
+            val updated = state.images.map { img ->
+                if (img.id == id) img.copy(x = x, y = y, width = clampedWidth, height = clampedHeight) else img
             }
             state.copy(images = updated)
         }
@@ -617,6 +620,7 @@ class CanvasViewModel @JvmOverloads constructor(
         _uiState.update { state ->
             state.copy(
                 images = state.images.filterNot { it.id == id },
+                selectedImageId = if (state.selectedImageId == id) null else state.selectedImageId,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty()
             )
@@ -631,7 +635,7 @@ class CanvasViewModel @JvmOverloads constructor(
             val updated = state.images.map { img ->
                 img.copy(isSelected = (img.id == id))
             }
-            state.copy(images = updated)
+            state.copy(images = updated, selectedImageId = id)
         }
     }
 
@@ -687,6 +691,7 @@ class CanvasViewModel @JvmOverloads constructor(
                 strokes = previousSnapshot.strokes,
                 canvasTextAnnotations = previousSnapshot.textAnnotations,
                 images = previousSnapshot.images,
+                selectedImageId = null,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty()
             )
@@ -709,6 +714,7 @@ class CanvasViewModel @JvmOverloads constructor(
                 strokes = nextSnapshot.strokes,
                 canvasTextAnnotations = nextSnapshot.textAnnotations,
                 images = nextSnapshot.images,
+                selectedImageId = null,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty()
             )
@@ -722,6 +728,7 @@ class CanvasViewModel @JvmOverloads constructor(
                 strokes = emptyList(),
                 canvasTextAnnotations = emptyList(),
                 images = emptyList(),
+                selectedImageId = null,
                 currentActiveStroke = null,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty()
@@ -729,90 +736,11 @@ class CanvasViewModel @JvmOverloads constructor(
         }
     }
 
-    // Helper for tests
     fun addStroke(stroke: DrawingStroke) {
         saveUndoState()
         _uiState.update { state ->
             state.copy(
                 strokes = state.strokes + stroke,
-                canUndo = undoStack.isNotEmpty(),
-                canRedo = redoStack.isNotEmpty()
-            )
-        }
-    }
-
-    // --- MathEngine STEM Scratchpad Integration ---
-
-    fun setFormulaText(text: String) {
-        _uiState.update { it.copy(formulaText = text) }
-    }
-
-    fun setOverlayVisible(visible: Boolean) {
-        _uiState.update { it.copy(isOverlayVisible = visible) }
-    }
-
-    fun toggleOverlayExpanded() {
-        _uiState.update { it.copy(isOverlayExpanded = !it.isOverlayExpanded) }
-    }
-
-    fun evaluateFormula(expression: String? = null) {
-        val expr = expression ?: _uiState.value.formulaText
-        if (expr.isBlank()) return
-
-        val context = _uiState.value.evaluationContext
-        val result = mathEngine.evaluate(expr, context)
-
-        _uiState.update { state ->
-            state.copy(
-                formulaText = expr,
-                currentResult = result,
-                calculationHistory = listOf(result) + state.calculationHistory,
-                isOverlayVisible = true
-            )
-        }
-    }
-
-    fun setAngleMode(angleMode: AngleMode) {
-        val currentContext = _uiState.value.evaluationContext
-        val newContext = currentContext.copy(config = currentContext.config.copy(angleMode = angleMode))
-        _uiState.update { it.copy(evaluationContext = newContext) }
-        if (_uiState.value.formulaText.isNotBlank()) {
-            evaluateFormula()
-        }
-    }
-
-    fun setVariable(name: String, value: Double) {
-        val newContext = _uiState.value.evaluationContext.withVariable(name, value)
-        _uiState.update { it.copy(evaluationContext = newContext) }
-    }
-
-    fun removeVariable(name: String) {
-        val currentContext = _uiState.value.evaluationContext
-        val newContext = currentContext.copy(variables = currentContext.variables - name)
-        _uiState.update { it.copy(evaluationContext = newContext) }
-    }
-
-    fun clearCalculationHistory() {
-        _uiState.update { it.copy(calculationHistory = emptyList()) }
-    }
-
-    fun insertResultToCanvas(customText: String? = null) {
-        val result = _uiState.value.currentResult
-        val textToInsert = customText ?: when (result) {
-            is MathResult.Success -> "= ${result.formattedResult}"
-            else -> return
-        }
-
-        saveUndoState()
-        val annotation = CanvasTextAnnotation(
-            text = textToInsert,
-            x = 100f,
-            y = 100f
-        )
-
-        _uiState.update { state ->
-            state.copy(
-                canvasTextAnnotations = state.canvasTextAnnotations + annotation,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty()
             )

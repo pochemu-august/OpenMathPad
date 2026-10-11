@@ -3,13 +3,6 @@ package com.augustuz.openmathpad.canvas.ui
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,12 +16,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -38,7 +29,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -52,6 +42,7 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
@@ -64,25 +55,27 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.augustuz.openmathpad.canvas.media.TaskImageManager
 import com.augustuz.openmathpad.canvas.model.CanvasImage
 import com.augustuz.openmathpad.canvas.model.CanvasTextAnnotation
+import com.augustuz.openmathpad.canvas.model.CanvasTool
 import com.augustuz.openmathpad.canvas.model.DrawingStroke
 import com.augustuz.openmathpad.canvas.state.CanvasViewModel
 import com.augustuz.openmathpad.canvas.state.InputDiagnostics
 import com.augustuz.openmathpad.ui.theme.OpenMathPadTheme
+import java.io.File
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Infinite Canvas Math & Physics Scratchpad supporting:
+ * Infinite Canvas Note-taking & STEM Scratchpad supporting:
  * - Infinite pan & zoom coordinate transformations (0.2x to 5.0x).
- * - Touch vs Stylus separation with 100% palm rejection:
- *     Stylus writes strokes mapped to scene coordinates `(screen - pan) / zoom`.
- *     Two-finger gestures pan and pinch-to-zoom.
- *     Single finger ignored by default for zero-palm-interference writing.
- * - Draggable and resizable STEM problem screenshot cards inserted from device storage.
- * - Hardware-accelerated stroke rendering and infinite coordinate dot grid.
+ * - Touch vs Stylus separation with 100% palm rejection.
+ * - Real-time streamline stabilization & calligraphic inking with tapered segmented ribbons.
+ * - Interactive draggable and resizable problem screenshot cards with proportional 4-corner scaling.
+ * - High-performance infinite coordinate dot grid.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -96,23 +89,26 @@ fun InfiniteCanvas(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
+    val context = LocalContext.current
 
-    // Media & Problem Screenshot Picker Launcher
+    // Media & Problem Screenshot Picker Launcher with Downscale Safety and Internal Persistence
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            viewModel.addImage(uri = it.toString())
+            val persistentPath = TaskImageManager.importAndDownscaleImage(context, it)
+            if (persistentPath != null) {
+                viewModel.addImage(filePath = persistentPath)
+            }
         }
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val isLargeTabletWidth = maxWidth >= 840.dp
         val panX = uiState.panOffsetX
         val panY = uiState.panOffsetY
         val zoom = uiState.zoomScale
 
-        // 1. Hardware-Accelerated Drawing Surface (Infinite Dot Grid + Vector Strokes)
+        // 1. Hardware-Accelerated Drawing Surface (Infinite Dot Grid + Vector Inking)
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
@@ -134,13 +130,13 @@ fun InfiniteCanvas(
                 translate(left = panX, top = panY)
                 scale(scaleX = zoom, scaleY = zoom, pivot = Offset.Zero)
             }) {
-                // Render completed strokes
+                // Render completed strokes with calligraphic ribbon segments
                 val strokes = uiState.strokes
                 for (i in strokes.indices) {
                     drawStroke(strokes[i])
                 }
 
-                // Render current in-progress active stroke
+                // Render current active in-progress stroke
                 uiState.currentActiveStroke?.let { activeStroke ->
                     drawStroke(activeStroke)
                 }
@@ -153,7 +149,7 @@ fun InfiniteCanvas(
             }
         }
 
-        // 2. Interactive Media / Problem Screenshot Cards (Draggable & Resizable in Scene Space)
+        // 2. Interactive Media / Problem Screenshot Cards (Draggable & 4-Corner Resizable)
         uiState.images.forEach { canvasImage ->
             CanvasImageCard(
                 image = canvasImage,
@@ -163,8 +159,8 @@ fun InfiniteCanvas(
                 onPositionChange = { newX, newY ->
                     viewModel.updateImagePosition(canvasImage.id, newX, newY)
                 },
-                onResize = { newW, newH ->
-                    viewModel.resizeImage(canvasImage.id, newW, newH)
+                onGeometryChange = { newX, newY, newW, newH ->
+                    viewModel.updateImageGeometry(canvasImage.id, newX, newY, newW, newH)
                 },
                 onDelete = {
                     viewModel.removeImage(canvasImage.id)
@@ -188,54 +184,13 @@ fun InfiniteCanvas(
                 onClear = viewModel::clear,
                 onAddImageClicked = { imagePickerLauncher.launch("image/*") },
                 onResetZoom = viewModel::resetZoom,
-                onCalculateClicked = {
-                    viewModel.setOverlayVisible(!uiState.isOverlayVisible)
-                },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 16.dp, start = 16.dp, end = 16.dp)
             )
         }
 
-        // 4. STEM Math & Physics Calculator Overlay Card
-        AnimatedVisibility(
-            visible = uiState.isOverlayVisible,
-            enter = if (isLargeTabletWidth) {
-                slideInHorizontally(initialOffsetX = { it }) + fadeIn()
-            } else {
-                slideInVertically(initialOffsetY = { it }) + fadeIn()
-            },
-            exit = if (isLargeTabletWidth) {
-                slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
-            } else {
-                slideOutVertically(targetOffsetY = { it }) + fadeOut()
-            },
-            modifier = if (isLargeTabletWidth) {
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 96.dp, end = 16.dp, bottom = 16.dp)
-                    .width(420.dp)
-            } else {
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
-            }
-        ) {
-            FormulaOverlayCard(
-                uiState = uiState,
-                onFormulaChange = viewModel::setFormulaText,
-                onEvaluateFormula = { viewModel.evaluateFormula(it) },
-                onToggleExpanded = viewModel::toggleOverlayExpanded,
-                onCloseOverlay = { viewModel.setOverlayVisible(false) },
-                onSetAngleMode = viewModel::setAngleMode,
-                onSetVariable = viewModel::setVariable,
-                onRemoveVariable = viewModel::removeVariable,
-                onInsertResultToCanvas = { text -> viewModel.insertResultToCanvas(text) },
-                onClearHistory = viewModel::clearCalculationHistory
-            )
-        }
-
-        // 5. Input Telemetry & Palm Rejection Diagnostics
+        // 4. Input Telemetry & Palm Rejection Diagnostics
         if (showDiagnostics) {
             InfiniteCanvasDiagnosticsBadge(
                 diagnostics = uiState.diagnostics,
@@ -253,7 +208,7 @@ fun InfiniteCanvas(
 
 /**
  * Interactive Media Card representing an inserted problem screenshot or task.
- * Positioned and scaled directly in infinite canvas coordinate space.
+ * Positioned in scene space, draggable from center, proportionally resizable via 4 corner handles.
  */
 @Composable
 private fun CanvasImageCard(
@@ -262,13 +217,13 @@ private fun CanvasImageCard(
     panOffsetY: Float,
     zoomScale: Float,
     onPositionChange: (Float, Float) -> Unit,
-    onResize: (Float, Float) -> Unit,
+    onGeometryChange: (Float, Float, Float, Float) -> Unit,
     onDelete: () -> Unit,
     onSelect: () -> Unit
 ) {
     val density = LocalDensity.current
 
-    // Convert scene coordinates to current screen pixels
+    // Convert scene coordinates to screen pixels
     val screenX = image.x * zoomScale + panOffsetX
     val screenY = image.y * zoomScale + panOffsetY
     val screenWidthPx = image.width * zoomScale
@@ -277,18 +232,18 @@ private fun CanvasImageCard(
     val widthDp = with(density) { screenWidthPx.toDp() }
     val heightDp = with(density) { screenHeightPx.toDp() }
 
+    val aspectRatio = max(0.2f, image.width / max(1f, image.height))
+
     Box(
         modifier = Modifier
             .offset { IntOffset(screenX.roundToInt(), screenY.roundToInt()) }
             .size(width = widthDp, height = heightDp)
-            .padding(4.dp)
     ) {
+        // Main Image Container
         Card(
             shape = RoundedCornerShape(12.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = if (image.isSelected) 8.dp else 4.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier
                 .fillMaxSize()
                 .then(
@@ -300,75 +255,148 @@ private fun CanvasImageCard(
                 )
                 .clickable { onSelect() }
                 .pointerInput(image.id, zoomScale) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        val deltaSceneX = dragAmount.x / zoomScale
-                        val deltaSceneY = dragAmount.y / zoomScale
-                        onPositionChange(image.x + deltaSceneX, image.y + deltaSceneY)
-                    }
+                    detectDragGestures(
+                        onDragStart = { onSelect() },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            val deltaSceneX = dragAmount.x / zoomScale
+                            val deltaSceneY = dragAmount.y / zoomScale
+                            onPositionChange(image.x + deltaSceneX, image.y + deltaSceneY)
+                        }
+                    )
                 }
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 AsyncImage(
-                    model = image.uri,
-                    contentDescription = "Inserted Problem Screenshot",
+                    model = File(image.filePath),
+                    contentDescription = "Inserted Task Screenshot",
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(RoundedCornerShape(12.dp)),
                     contentScale = ContentScale.Fit
                 )
-
-                // Top-Right Delete Action Button
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.85f),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp)
-                        .size(28.dp)
-                ) {
-                    IconButton(
-                        onClick = onDelete,
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Remove Problem Image",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-
-                // Bottom-Right Corner Resize Handle
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(6.dp)
-                        .size(28.dp)
-                        .shadow(2.dp, CircleShape)
-                        .pointerInput(image.id, zoomScale) {
-                            detectDragGestures { change, dragAmount ->
-                                change.consume()
-                                val deltaW = dragAmount.x / zoomScale
-                                val deltaH = dragAmount.y / zoomScale
-                                onResize(image.width + deltaW, image.height + deltaH)
-                            }
-                        }
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.OpenWith,
-                            contentDescription = "Resize Image Card",
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
             }
         }
+
+        // Selection Controls: Delete button and 4 proportional corner resize handles
+        if (image.isSelected) {
+            // Delete button at top center / top-right
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.errorContainer,
+                shadowElevation = 4.dp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 12.dp, y = (-12).dp)
+                    .size(32.dp)
+            ) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Delete Image",
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // 1. Top-Left Corner Resize Handle
+            ResizeCornerHandle(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (-10).dp, y = (-10).dp),
+                onDrag = { dragAmount ->
+                    val deltaX = dragAmount.x / zoomScale
+                    val deltaY = dragAmount.y / zoomScale
+                    val deltaScale = (-deltaX - deltaY * aspectRatio) / 2f
+                    val newWidth = max(80f, image.width + deltaScale)
+                    val newHeight = newWidth / aspectRatio
+                    val posX = image.x + (image.width - newWidth)
+                    val posY = image.y + (image.height - newHeight)
+                    onGeometryChange(posX, posY, newWidth, newHeight)
+                }
+            )
+
+            // 2. Top-Right Corner Resize Handle
+            ResizeCornerHandle(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 10.dp, y = (-10).dp),
+                onDrag = { dragAmount ->
+                    val deltaX = dragAmount.x / zoomScale
+                    val deltaY = dragAmount.y / zoomScale
+                    val deltaScale = (deltaX - deltaY * aspectRatio) / 2f
+                    val newWidth = max(80f, image.width + deltaScale)
+                    val newHeight = newWidth / aspectRatio
+                    val posY = image.y + (image.height - newHeight)
+                    onGeometryChange(image.x, posY, newWidth, newHeight)
+                }
+            )
+
+            // 3. Bottom-Left Corner Resize Handle
+            ResizeCornerHandle(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .offset(x = (-10).dp, y = 10.dp),
+                onDrag = { dragAmount ->
+                    val deltaX = dragAmount.x / zoomScale
+                    val deltaY = dragAmount.y / zoomScale
+                    val deltaScale = (-deltaX + deltaY * aspectRatio) / 2f
+                    val newWidth = max(80f, image.width + deltaScale)
+                    val newHeight = newWidth / aspectRatio
+                    val posX = image.x + (image.width - newWidth)
+                    onGeometryChange(posX, image.y, newWidth, newHeight)
+                }
+            )
+
+            // 4. Bottom-Right Corner Resize Handle
+            ResizeCornerHandle(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 10.dp, y = 10.dp),
+                onDrag = { dragAmount ->
+                    val deltaX = dragAmount.x / zoomScale
+                    val deltaY = dragAmount.y / zoomScale
+                    val deltaScale = (deltaX + deltaY * aspectRatio) / 2f
+                    val newWidth = max(80f, image.width + deltaScale)
+                    val newHeight = newWidth / aspectRatio
+                    onGeometryChange(image.x, image.y, newWidth, newHeight)
+                }
+            )
+        }
+    }
+}
+
+/**
+ * Circular resize handle positioned on bounding box corners.
+ */
+@Composable
+private fun ResizeCornerHandle(
+    modifier: Modifier = Modifier,
+    onDrag: (Offset) -> Unit
+) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primary,
+        shadowElevation = 4.dp,
+        modifier = modifier
+            .size(24.dp)
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    onDrag(dragAmount)
+                }
+            }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(4.dp)
+                .background(Color.White, CircleShape)
+        )
     }
 }
 
@@ -385,7 +413,6 @@ private fun DrawScope.drawInfiniteDotGrid(
     val scale = if (zoomScale <= 0f) 1.0f else zoomScale
     val effectiveGridSize = baseGridSizePx * scale
 
-    // Adjust grid step when deeply zoomed out to avoid dot saturation
     val stepMultiplier = when {
         effectiveGridSize < 16f -> 4
         effectiveGridSize < 24f -> 2
@@ -395,16 +422,15 @@ private fun DrawScope.drawInfiniteDotGrid(
     val dotRadius = (1.5f * scale.coerceIn(0.6f, 1.4f)).coerceIn(1.0f, 3.0f)
     val dotColor = Color.LightGray.copy(alpha = 0.45f)
 
-    // Viewport bounds in scene coordinates
     val sceneLeft = -panOffsetX / scale
     val sceneTop = -panOffsetY / scale
     val sceneRight = (size.width - panOffsetX) / scale
     val sceneBottom = (size.height - panOffsetY) / scale
 
-    val startX = (floor(sceneLeft / gridStep) * gridStep)
-    val endX = (ceil(sceneRight / gridStep) * gridStep)
-    val startY = (floor(sceneTop / gridStep) * gridStep)
-    val endY = (ceil(sceneBottom / gridStep) * gridStep)
+    val startX = floor(sceneLeft / gridStep) * gridStep
+    val endX = ceil(sceneRight / gridStep) * gridStep
+    val startY = floor(sceneTop / gridStep) * gridStep
+    val endY = ceil(sceneBottom / gridStep) * gridStep
 
     var x = startX
     while (x <= endX) {
@@ -424,7 +450,7 @@ private fun DrawScope.drawInfiniteDotGrid(
 }
 
 /**
- * Renders a single vector stroke on DrawScope.
+ * Renders a vector stroke using calligraphic tapered segmented ribbons with round caps and joins.
  */
 private fun DrawScope.drawStroke(stroke: DrawingStroke) {
     if (stroke.points.isEmpty()) return
@@ -443,7 +469,7 @@ private fun DrawScope.drawStroke(stroke: DrawingStroke) {
         return
     }
 
-    if (stroke.isUniformWidth) {
+    if (stroke.tool == CanvasTool.HIGHLIGHTER) {
         drawPath(
             path = stroke.path,
             color = color,
@@ -451,28 +477,21 @@ private fun DrawScope.drawStroke(stroke: DrawingStroke) {
             style = stroke.strokeStyle
         )
     } else {
-        // Variable-width ink segment rendering
+        // True calligraphic segmented ribbon rendering with StrokeCap.Round
         val points = stroke.points
-        var prevX = points[0].x
-        var prevY = points[0].y
-        var prevW = points[0].width
-
         for (i in 1 until points.size) {
-            val curr = points[i]
-            val avgWidth = (prevW + curr.width) / 2f
+            val p0 = points[i - 1]
+            val p1 = points[i]
+            val segWidth = (p0.width + p1.width) / 2f
 
             drawLine(
                 color = color,
-                start = Offset(prevX, prevY),
-                end = Offset(curr.x, curr.y),
-                strokeWidth = avgWidth,
+                start = Offset(p0.x, p0.y),
+                end = Offset(p1.x, p1.y),
+                strokeWidth = segWidth,
                 cap = StrokeCap.Round,
                 alpha = alpha
             )
-
-            prevX = curr.x
-            prevY = curr.y
-            prevW = curr.width
         }
     }
 }

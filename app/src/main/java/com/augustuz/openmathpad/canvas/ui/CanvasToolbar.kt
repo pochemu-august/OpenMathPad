@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoNotDisturb
-import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Button
@@ -92,8 +91,7 @@ fun CanvasToolbar(
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
     onAddImageClicked: () -> Unit = {},
-    onResetZoom: () -> Unit = {},
-    onCalculateClicked: () -> Unit = {}
+    onResetZoom: () -> Unit = {}
 ) {
     Card(
         modifier = modifier,
@@ -217,14 +215,6 @@ fun CanvasToolbar(
                     )
                 }
 
-                // Math Overlay Calculator Toggle
-                IconButton(onClick = onCalculateClicked) {
-                    Icon(
-                        imageVector = Icons.Default.Functions,
-                        contentDescription = "Math Calculator",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
 
                 VerticalDivider(
                     modifier = Modifier

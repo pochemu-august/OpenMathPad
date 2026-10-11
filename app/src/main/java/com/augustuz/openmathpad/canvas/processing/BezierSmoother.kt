@@ -25,7 +25,8 @@ object BezierSmoother {
         pointerIndex: Int = 0,
         panOffsetX: Float = 0f,
         panOffsetY: Float = 0f,
-        zoomScale: Float = 1.0f
+        zoomScale: Float = 1.0f,
+        strokeStabilizer: StrokeStabilizer? = null
     ): List<StrokePoint> {
         val historySize = event.historySize
         val points = ArrayList<StrokePoint>(historySize + 1)
@@ -44,7 +45,12 @@ object BezierSmoother {
             val hTime = event.getHistoricalEventTime(h)
 
             pressureSmoother.update(hPressure, baseWidth, isStylus)
-            points.add(StrokePoint(sceneHX, sceneHY, pressureSmoother.currentSmoothedPressure, pressureSmoother.currentCalculatedWidth, hTime))
+            val (stX, stY, stP) = if (strokeStabilizer != null) {
+                strokeStabilizer.filter(sceneHX, sceneHY, pressureSmoother.currentSmoothedPressure)
+            } else {
+                Triple(sceneHX, sceneHY, pressureSmoother.currentSmoothedPressure)
+            }
+            points.add(StrokePoint(stX, stY, stP, pressureSmoother.currentCalculatedWidth, hTime))
         }
 
         // 2. Process current event point
@@ -56,7 +62,12 @@ object BezierSmoother {
         val cTime = event.eventTime
 
         pressureSmoother.update(cPressure, baseWidth, isStylus)
-        points.add(StrokePoint(sceneCX, sceneCY, pressureSmoother.currentSmoothedPressure, pressureSmoother.currentCalculatedWidth, cTime))
+        val (stX, stY, stP) = if (strokeStabilizer != null) {
+            strokeStabilizer.filter(sceneCX, sceneCY, pressureSmoother.currentSmoothedPressure)
+        } else {
+            Triple(sceneCX, sceneCY, pressureSmoother.currentSmoothedPressure)
+        }
+        points.add(StrokePoint(stX, stY, stP, pressureSmoother.currentCalculatedWidth, cTime))
 
         return points
     }
